@@ -77,7 +77,7 @@ const api = {
     series_page: `${domain}/series-`,
     subs_list:   `${domain}/xml/?req=RpcApiSubtitle_GetListing&media_id=`,
     subs_file:   `${domain}/xml/?req=RpcApiSubtitle_GetXml&subtitle_script_id=`,
-    auth:        `${domain}/xml/?req=RpcApiUser_Login`,
+    auth:        `${domain}/login`,
     // ${domain}/showseriesmedia?id=24631
     // ${domain}/{GROUP_URL}/videos,
 };
@@ -114,7 +114,6 @@ const usefulCookies = {
         await getMediaById();
     }
     else{
-        console.log(argv);
         appYargs.showHelp();
     }
 })();
@@ -125,10 +124,25 @@ async function doAuth(){
     const iLogin = argv.user ? argv.user : await shlp.question('[Q] LOGIN/EMAIL');
     const iPsswd = argv.pass ? argv.pass : await shlp.question('[Q] PASSWORD   ');
     const authData = new URLSearchParams({
-        name: iLogin,
-        password: iPsswd
+        'login_form[name]': iLogin,
+        'login_form[password]': iPsswd,
+        'login_form[redirect_url]': '/',
     });
-    let auth = await getData(api.auth,{ method: 'POST', body: authData.toString(), useProxy: true, skipCookies: true });
+    let authPage = await getData(api.auth, { useProxy: true });
+    if(!authPage.ok){
+        console.log('[ERROR] Authentication failed!');
+        if(authPage.error && authPage.error.res && authPage.error.res.body){
+            console.log('[AUTH] Body:', authPage.error.res.body);
+        }
+        return;
+    }
+    let loginFormToken = authPage.res.body.match(/name="login_form\[_token\]" value="(.*)"/)
+    if(!loginFormToken){
+        console.log('[ERROR] Can\'t fetch login token! Already logged?');
+        return;
+    }
+    authData.append('login_form[_token]', loginFormToken[1]);
+    let auth = await getData(api.auth, { method: 'POST', body: authData.toString(), followRedirect: false, useProxy: true });
     if(!auth.ok){
         console.log('[ERROR] Authentication failed!');
         if(auth.error && auth.error.res && auth.error.res.body){
@@ -1231,6 +1245,9 @@ async function getData(durl, params){
     if(params.headers){
         options.headers = params.headers;
     }
+    if(params.followRedirect == false){
+        options.followRedirect = false;
+    }
     // set additional headers
     if(options.method == 'POST'){
         options.headers['Content-Type'] = 'application/x-www-form-urlencoded';
@@ -1349,6 +1366,11 @@ async function getData(durl, params){
 function setNewCookie(setCookie, isAuth, fileData){
     let cookieUpdated = [], lastExp = 0;
     setCookie = fileData ? cookieFile(fileData) : shlp.cookie.parse(setCookie);
+    for(let uCookie of Object.keys(setCookie)){
+        if(setCookie[uCookie] && setCookie[uCookie].value && setCookie[uCookie].value == 'deleted'){
+            delete setCookie[uCookie];
+        }
+    }
     for(let uCookie of usefulCookies.auth){
         const cookieForceExp = 60*60*24*7;
         const cookieExpCur = session[uCookie] ? session[uCookie] : { expires: 0 };
@@ -1358,12 +1380,18 @@ function setNewCookie(setCookie, isAuth, fileData){
         }
     }
     for(let uCookie of usefulCookies.auth){
+        if(!setCookie[uCookie]){
+            continue;
+        }
         if(isAuth || setCookie[uCookie] && Date.now() > lastExp){
             session[uCookie] = setCookie[uCookie];
             cookieUpdated.push(uCookie);
         }
     }
     for(let uCookie of usefulCookies.sess){
+        if(!setCookie[uCookie]){
+            continue;
+        }
         if(
             isAuth 
             || argv.nosess && setCookie[uCookie]

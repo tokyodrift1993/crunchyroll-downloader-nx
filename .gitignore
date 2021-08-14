@@ -1,4 +1,3 @@
-
 /bin/ff*
 /bin/mkv*
 /_builds/*
@@ -6,7 +5,6 @@
 /node_modules/
 /videos/*.json
 session.yml
-package-lock.json
 *.user.yml
 *.ttf
 *.otf

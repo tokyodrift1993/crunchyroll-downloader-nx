@@ -63,6 +63,8 @@ let audDubT  = '',
 // api domains
 const domain    = 'https://www.crunchyroll.com';
 const apidomain = 'https://api.crunchyroll.com';
+const betaSite  = /beta\.crunchyroll\.com/;
+const betaApi   = 'https://beta-api.crunchyroll.com';
 
 // api script urls
 const api = {
@@ -136,9 +138,12 @@ async function doAuth(){
         }
         return;
     }
-    let loginFormToken = authPage.res.body.match(/name="login_form\[_token\]" value="(.*)"/)
+    let loginFormToken = authPage.res.body.match(/name="login_form\[_token\]" value="(.*)"/);
     if(!loginFormToken){
         console.log('[ERROR] Can\'t fetch login token! Already logged?');
+        if(authPage.res.url.match(betaSite)){
+            await optOutBeta();
+        }
         return;
     }
     authData.append('login_form[_token]', loginFormToken[1]);
@@ -152,6 +157,52 @@ async function doAuth(){
     }
     setNewCookie(auth.res.headers['set-cookie'], true);
     console.log('[INFO] Authentication successful!');
+}
+
+async function optOutBeta(){
+    // info
+    console.log('[ERROR] This downloader only works with classic crunchyroll site!');
+    console.log('[ERROR] Trying switch to classic version...');
+    // beta data
+    const beta = {
+        auth: '/auth/v1/token',
+        authBasic: 'Basic bm9haWhkZXZtXzZpeWcwYThsMHE6',
+        profile: '/accounts/v1/me/profile',
+    };
+    beta.headers = { Authorization: beta.authBasic };
+    // get token
+    const getBetaToken = await getData(betaApi + beta.auth, {
+        method: 'POST',
+        headers: beta.headers,
+        body: 'grant_type=etp_rt_cookie',
+        useProxy: true,
+    });
+    if(!getBetaToken.ok){
+        console.log('[ERROR] Authentication failed!');
+        if(getBetaToken.error && getBetaToken.error.res && getBetaToken.error.res.body){
+            console.log('[AUTH] Body:', getBetaToken.error.res.body);
+        }
+        return;
+    }
+    const betaToken = JSON.parse(getBetaToken.res.body);
+    // switch to classic
+    const betaOptOutByToken = await getData(betaApi + beta.profile, {
+        method: 'PATCH',
+        headers: {
+            Authorization: 'Bearer ' + betaToken.access_token,
+            'Content-Type': 'application/json;charset=utf-8',
+        },
+        body: '{"cr_beta_opt_in":false}',
+        useProxy: true,
+    });
+    if(!betaOptOutByToken.ok){
+        console.log('[ERROR] Authentication failed!');
+        if(betaOptOutByToken.error && betaOptOutByToken.error.res && betaOptOutByToken.error.res.body){
+            console.log('[AUTH] Body:', betaOptOutByToken.error.res.body);
+        }
+        return;
+    }
+    console.log('[INFO] Try get video or relogin!');
 }
 
 // get cr fonts
@@ -598,6 +649,15 @@ async function getMedia(mMeta){
     }
     
     const contextData = mediaPage.res.body.match(/({"@context":.*)(<\/script>)/);
+    
+    if(!contextData){
+        console.log('[ERROR] Something goes wrong...');
+        if(mediaPage.res.url.match(betaSite)){
+            await optOutBeta();
+        }
+        process.exit(1);
+    }
+    
     const contextJson = JSON.parse(contextData[1]);
     const eligibleRegion = contextJson.potentialAction
         .actionAccessibilityRequirement.eligibleRegion;
@@ -1276,13 +1336,13 @@ async function getData(durl, params){
             setNewCookie('', true, netcookie);
         }
         catch(e){
-            console.log('[ERROR] Cannot load cookie.txt file!');
+            console.log('[ERROR] Cannot load cookies.txt file!');
         }
     }
     // if auth
     let cookie = [];
     const loc = new URL(durl);
-    if(loc.origin == domain || loc.origin == apidomain){
+    if(loc.origin == domain || loc.origin == apidomain || loc.origin.match(betaSite) || loc.origin.match(betaApi) ){
         for(let uCookie of usefulCookies.auth){
             if(checkCookieVal(session[uCookie])){
                 cookie.push(uCookie);

@@ -271,7 +271,9 @@ const appArgv = (cfg, langsData) => {
         .argv;
 };
 
-const showHelp = yargs.showHelp;
+const showHelp = () => {
+    yargs.showHelp();
+};
 
 module.exports = {
     appArgv,

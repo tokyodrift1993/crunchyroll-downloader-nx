@@ -1,5 +1,10 @@
 ## Change Log
 
+### Changelog is outdated
+This changelog is out of date and wont be continued. 
+Please see the releases comments, or if not present the commit comments.
+https://github.com/anidl/crunchyroll-downloader-nx/releases
+
 ### 4.23.1 (2021/03/15)
 - Download by media_id
 - Minor fixes and improvements

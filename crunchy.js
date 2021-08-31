@@ -1,100 +1,47 @@
 #!/usr/bin/env node
 
 // build-in
-const fs = require('fs');
 const path = require('path');
+const fs = require('fs-extra');
 
 // package program
 const packageJson = require('./package.json');
 console.log(`\n=== Crunchyroll Downloader NX ${packageJson.version} ===\n`);
 
 // plugins
-const { lookpath } = require('lookpath');
 const shlp = require('sei-helper');
-const got = require('got');
-const yaml = require('yaml');
-const chio = require('cheerio');
-const xhtml2js = shlp.xhtml2js; // todo: use cheerio directly
 const m3u8 = require('m3u8-parsed');
+const cheerio = require('cheerio');
 const streamdl = require('hls-download');
 
 // custom modules
-const fontsData     = require('./modules/module.fontsData');
-const cookieFile    = require('./modules/module.cookieFile');
-const langsData     = require('./modules/module.langsData');
-const getYamlCfg    = require('./modules/module.cfg-loader');
-const appYargs      = require('./modules/module.app-args');
+const fontsData   = require('./modules/module.fontsData');
+const langsData   = require('./modules/module.langsData');
+const yamlCfg     = require('./modules/module.cfg-loader');
+const yargs       = require('./modules/module.app-args');
+const epsFilter   = require('./modules/module.eps-filter');
+const appMux      = require('./modules/module.muxing');
 
-// new-cfg
-const curDirname  = process.pkg ? path.dirname(process.execPath) : __dirname;
-const cfgFolder   = path.join(curDirname, '/config');
+// new-cfg paths
+const workingDir  = process.pkg ? path.dirname(process.execPath) : __dirname;
+const cfgFolder   = path.join(workingDir, '/config');
 const binCfgFile  = path.join(cfgFolder, 'bin-path');
 const dirCfgFile  = path.join(cfgFolder, 'dir-path');
 const cliCfgFile  = path.join(cfgFolder, 'cli-defaults');
 const sessCfgFile = path.join(cfgFolder, 'session');
-const sessTxtFile = path.join(cfgFolder, 'cookies.txt');
-
-// params
-const cfg = {
-    bin: getYamlCfg(binCfgFile),
-    dir: getYamlCfg(dirCfgFile),
-    cli: getYamlCfg(cliCfgFile),
-};
-
-// custom
-let session = getYamlCfg(sessCfgFile, true);
+const cfg         = yamlCfg.loadCfg(workingDir, binCfgFile, dirCfgFile, cliCfgFile);
 
 // args
-const argv = appYargs.appArgv(cfg.cli, langsData);
+const appYargs = new yargs(cfg.cli, langsData);
+const argv = appYargs.appArgv();
+argv.appstore = {};
 
-// fn variables
-let audDubT  = '',
-    audDubE  = '',
-    audDubP  = '',
-    fnTitle  = '',
-    fnEpNum  = '',
-    fnEpTitl = '',
-    fnSuffix = '',
-    fnOutput = '',
-    isBatch  = false,
-    dlFailed = false,
-    sxList   = [];
+// load req
+const { domain, api } = require('./modules/module.api-urls');
+const reqModule = require('./modules/module.req');
+const req = new reqModule.Req(domain, argv, sessCfgFile);
 
-// api domains
-const domain    = 'https://www.crunchyroll.com';
-const apidomain = 'https://api.crunchyroll.com';
-const betaSite  = /beta\.crunchyroll\.com/;
-const betaApi   = 'https://beta-api.crunchyroll.com';
-
-// api script urls
-const api = {
-    search1:     `${domain}/ajax/?req=RpcApiSearch_GetSearchCandidates`,
-    search2:     `${domain}/search_page`,
-    search3:     `${apidomain}/autocomplete.0.json`,
-    session:     `${apidomain}/start_session.0.json`,
-    collectins:  `${apidomain}/list_collections.0.json`,
-    rss_cid:     `${domain}/syndication/feed?type=episodes&id=`, // &lang=enUS
-    rss_gid:     `${domain}/syndication/feed?type=episodes&group_id=`, // &lang=enUS
-    media_page:  `${domain}/media-`,
-    series_page: `${domain}/series-`,
-    subs_list:   `${domain}/xml/?req=RpcApiSubtitle_GetListing&media_id=`,
-    subs_file:   `${domain}/xml/?req=RpcApiSubtitle_GetXml&subtitle_script_id=`,
-    auth:        `${domain}/login`,
-    // ${domain}/showseriesmedia?id=24631
-    // ${domain}/{GROUP_URL}/videos,
-};
-
-// set usable cookies
-const usefulCookies = {
-    auth: [
-        'etp_rt',
-        'c_visitor',
-    ],
-    sess: [ 
-        'session_id',
-    ],
-};
-
+// main
 (async () => {
     // select mode
     if(argv.auth){
@@ -109,8 +56,8 @@ const usefulCookies = {
     else if(argv.search2 && argv.search2.length > 2){
         await doSearch2();
     }
-    else if(argv.s && !isNaN(parseInt(argv.s, 10)) && parseInt(argv.s, 10) > 0){
-        await getShowById();
+    else if(argv.s && parseInt(argv.s, 10) > 0){
+        await getSeasonById();
     }
     else if(argv.e){
         await getMediaById();
@@ -119,91 +66,6 @@ const usefulCookies = {
         appYargs.showHelp();
     }
 })();
-
-// auth method
-async function doAuth(){
-    console.log('[INFO] Authentication');
-    const iLogin = argv.user ? argv.user : await shlp.question('[Q] LOGIN/EMAIL');
-    const iPsswd = argv.pass ? argv.pass : await shlp.question('[Q] PASSWORD   ');
-    const authData = new URLSearchParams({
-        'login_form[name]': iLogin,
-        'login_form[password]': iPsswd,
-        'login_form[redirect_url]': '/',
-    });
-    let authPage = await getData(api.auth, { useProxy: true });
-    if(!authPage.ok){
-        console.log('[ERROR] Authentication failed!');
-        if(authPage.error && authPage.error.res && authPage.error.res.body){
-            console.log('[AUTH] Body:', authPage.error.res.body);
-        }
-        return;
-    }
-    let loginFormToken = authPage.res.body.match(/name="login_form\[_token\]" value="(.*)"/);
-    if(!loginFormToken){
-        console.log('[ERROR] Can\'t fetch login token! Already logged?');
-        if(authPage.res.url.match(betaSite)){
-            await optOutBeta();
-        }
-        return;
-    }
-    authData.append('login_form[_token]', loginFormToken[1]);
-    let auth = await getData(api.auth, { method: 'POST', body: authData.toString(), followRedirect: false, useProxy: true });
-    if(!auth.ok){
-        console.log('[ERROR] Authentication failed!');
-        if(auth.error && auth.error.res && auth.error.res.body){
-            console.log('[AUTH] Body:', auth.error.res.body);
-        }
-        return;
-    }
-    setNewCookie(auth.res.headers['set-cookie'], true);
-    console.log('[INFO] Authentication successful!');
-}
-
-async function optOutBeta(){
-    // info
-    console.log('[ERROR] This downloader only works with classic crunchyroll site!');
-    console.log('[ERROR] Trying switch to classic version...');
-    // beta data
-    const beta = {
-        auth: '/auth/v1/token',
-        authBasic: 'Basic bm9haWhkZXZtXzZpeWcwYThsMHE6',
-        profile: '/accounts/v1/me/profile',
-    };
-    beta.headers = { Authorization: beta.authBasic };
-    // get token
-    const getBetaToken = await getData(betaApi + beta.auth, {
-        method: 'POST',
-        headers: beta.headers,
-        body: 'grant_type=etp_rt_cookie',
-        useProxy: true,
-    });
-    if(!getBetaToken.ok){
-        console.log('[ERROR] Authentication failed!');
-        if(getBetaToken.error && getBetaToken.error.res && getBetaToken.error.res.body){
-            console.log('[AUTH] Body:', getBetaToken.error.res.body);
-        }
-        return;
-    }
-    const betaToken = JSON.parse(getBetaToken.res.body);
-    // switch to classic
-    const betaOptOutByToken = await getData(betaApi + beta.profile, {
-        method: 'PATCH',
-        headers: {
-            Authorization: 'Bearer ' + betaToken.access_token,
-            'Content-Type': 'application/json;charset=utf-8',
-        },
-        body: '{"cr_beta_opt_in":false}',
-        useProxy: true,
-    });
-    if(!betaOptOutByToken.ok){
-        console.log('[ERROR] Authentication failed!');
-        if(betaOptOutByToken.error && betaOptOutByToken.error.res && betaOptOutByToken.error.res.body){
-            console.log('[AUTH] Body:', betaOptOutByToken.error.res.body);
-        }
-        return;
-    }
-    console.log('[INFO] Try get video or relogin!');
-}
 
 // get cr fonts
 async function getFonts(){
@@ -215,11 +77,16 @@ async function getFonts(){
             console.log(`[INFO] ${f} (${fontFile}) already downloaded!`);
         }
         else{
+            const fontFolder = path.dirname(fontLoc);
             if(fs.existsSync(fontLoc) && fs.statSync(fontLoc).size == 0){
                 fs.unlinkSync(fontLoc);
             }
+            try{
+                fs.ensureDirSync(fontFolder);
+            }
+            catch(e){}
             let fontUrl = fontsData.root + fontFile;
-            let getFont = await getData(fontUrl, { useProxy: true, skipCookies: true, binary: true });
+            let getFont = await req.getData(fontUrl, { useProxy: true, skipCookies: true, binary: true });
             if(getFont.ok){
                 fs.writeFileSync(fontLoc, getFont.res.body);
                 console.log(`[INFO] Downloaded: ${f} (${fontFile})`);
@@ -232,84 +99,203 @@ async function getFonts(){
     console.log('[INFO] All required fonts downloaded!');
 }
 
-async function doSearch(){
-    // session
-    let apiSession = '';
-    if(session.session_id && checkSessId(session.session_id) && !argv.nosess){
-        apiSession = session.session_id.value;
+// auth method
+async function doAuth(){
+    console.log('[INFO] Authentication');
+    
+    const iLogin = argv.user ? argv.user : await shlp.question('[Q] LOGIN/EMAIL');
+    const iPsswd = argv.pass ? argv.pass : await shlp.question('[Q] PASSWORD   ');
+    argv.user = iLogin;
+    argv.pass = iPsswd;
+    
+    const authData = new URLSearchParams({
+        'login_form[name]': iLogin,
+        'login_form[password]': iPsswd,
+        'login_form[redirect_url]': '/',
+    });
+    
+    const authPage = await req.getData(api.auth, { skipCookies: true, useProxy: true });
+    if(!authPage.ok){
+        console.log('[ERROR] Failed to fetch authentication page!');
+        return;
     }
-    // seacrh params
+    
+    const loginFormToken = authPage.res.body.match(/name="login_form\[_token\]" value="(.*)"/);
+    if(!loginFormToken){
+        console.log('[ERROR] Can\'t fetch login token! Already logged?');
+        if(new URL(authPage.res.url).origin == domain.www_beta){
+            await optOutBeta();
+        }
+        return;
+    }
+    
+    authData.append('login_form[_token]', loginFormToken[1]);
+    req.setNewCookie(authPage.res.headers['set-cookie'], true);
+    
+    const authReq = await req.getData(api.auth, { method: 'POST', body: authData.toString(), followRedirect: false, useProxy: true });
+    if(!authReq.ok){
+        console.log('[ERROR] Authentication failed!');
+        return;
+    }
+    
+    const authErr = authReq.res.body.match(/<li class="error">(.*)<\/li>/);
+    
+    if(authErr){
+        console.log('[ERROR] Auth Error:');
+        console.log('[ERROR]', authErr[1]);
+    }
+    else{
+        req.setNewCookie(authReq.res.headers['set-cookie'], true);
+        console.log('[INFO] Authentication successful!');
+    }
+    
+}
+
+async function apiSession(){
+    // api keys
+    const crDevices = {
+        win10: {
+            device_type:  'com.crunchyroll.windows.desktop',
+            access_token: 'LNDJgOit5yaRIWN',
+        },
+        android: {
+            device_type: 'com.crunchyroll.crunchyroid',
+            access_token: 'WveH9VkPLrXvuNm',
+        },
+    };
+    // session req params
+    const sessionReqParams = new URLSearchParams({
+        device_type:  crDevices.win10.device_type,
+        device_id  :  req.uuidv4(),
+        access_token: crDevices.win10.access_token,
+    });
+    // req session
+    const sessionReq = await req.getData(`${api.session}?${sessionReqParams.toString()}`, { useProxy:true });
+    if(!sessionReq.ok){
+        console.log('[ERROR] Can\'t update session id!');
+        return '';
+    }
+    // parse session data
+    const sessionData = JSON.parse(sessionReq.res.body);
+    if(sessionData.error){
+        console.log(`[ERROR] ${sessionData.message}`);
+        return '';
+    }
+    req.argv.nosess = false;
+    console.log(`[INFO] Your country: ${sessionData.data.country_code}\n`);
+    return sessionData.data.session_id;
+}
+
+async function optOutBeta(){
+    // info
+    console.log('[ERROR] This downloader only works with classic crunchyroll site!');
+    console.log('[ERROR] Trying switch to classic version...');
+    // beta data
+    const getBetaToken = await req.getData(api.beta_auth, {
+        method: 'POST',
+        headers: api.beta_authHeader,
+        body: 'grant_type=etp_rt_cookie',
+        useProxy: true,
+    });
+    if(!getBetaToken.ok){
+        console.log('[ERROR] Authentication failed!');
+        return;
+    }
+    // get token
+    const betaToken = JSON.parse(getBetaToken.res.body);
+    // switch to classic
+    const betaOptOutByToken = await req.getData(api.beta_profile, {
+        method: 'PATCH',
+        headers: {
+            Authorization: 'Bearer ' + betaToken.access_token,
+            'Content-Type': 'application/json;charset=utf-8',
+        },
+        body: '{"cr_beta_opt_in":false}',
+        skipCookies: true,
+        useProxy: true,
+    });
+    if(!betaOptOutByToken.ok){
+        console.log('[ERROR] Changing to classic failed!');
+        return;
+    }
+    const betaProfileReq = await req.getData(api.beta_profile, {
+        method: 'GET',
+        headers: {
+            Authorization: 'Bearer ' + betaToken.access_token,
+        },
+        skipCookies: true,
+        useProxy: true,
+    });
+    if(!betaProfileReq.ok){
+        console.log('[ERROR] Can`t get user profile!');
+        return;
+    }
+    const betaProfile = JSON.parse(betaProfileReq.res.body);
+    if(!betaProfile.cr_beta_opt_in){
+        console.log('[INFO] Done! Try get video again or relogin!');
+    }
+    else{
+        console.log('[INFO] Failed! Sorry :(');
+    }
+}
+
+// search 1
+async function doSearch(){
+    // search params
     const params = new URLSearchParams({
         q: argv.search,
         clases: 'series',
         media_types: 'anime',
         fields: 'series.series_id,series.name,series.year',
-        offset: argv.p ? (parseInt(argv.p)-1)*100 : 0,
+        offset: argv.p ? ( parseInt(argv.p) - 1 ) * 100 : 0,
         limit: 100,
         locale: 'enUS',
     });
-    if(apiSession != ''){
-        params.append('session_id', apiSession);
+    // session
+    if(
+        req.session.session_id
+        && req.checkSessId(req.session.session_id)
+        && req.session.session_id.value
+        && !req.argv.nosess
+    ){
+        params.append('session_id', req.session.session_id.value);
     }
     else{
-        const crDevices = {
-            win10: {
-                device_type:  'com.crunchyroll.windows.desktop',
-                access_token: 'LNDJgOit5yaRIWN',
-            },
-            android: {
-                device_type: 'com.crunchyroll.crunchyroid',
-                access_token: 'WveH9VkPLrXvuNm',
-            },
-        };
-        const sessionParams = new URLSearchParams({
-            device_type:  crDevices.win10.device_type,
-            device_id  :  '00000000-0000-0000-0000-000000000000',
-            access_token:  crDevices.win10.access_token,
-        });
-        let reqSession = await getData(`${api.session}?${sessionParams.toString()}`,{useProxy:true});
-        if(!reqSession.ok){
-            console.log('[ERROR] Can\'t update session id!');
+        const sessionData = await apiSession();
+        if(sessionData == ''){
             return;
         }
-        reqSession = JSON.parse(reqSession.res.body);
-        if(reqSession.error){
-            console.log(`[ERROR] ${aniList.message}`);
-        }
-        else{
-            argv.nosess = false;
-            console.log(`[INFO] Your country: ${reqSession.data.country_code}\n`);
-            apiSession = session.session_id.value;
-            params.append('session_id', apiSession);
-        }
+        params.append('session_id', sessionData);
     }
-    // request
-    let aniList = await getData(`${api.search3}?${params.toString()}`,{useProxy:true});
-    if(!aniList.ok){
+    
+    const getAniList = await req.getData(`${api.search3}?${params.toString()}`, { useProxy: true });
+    if(!getAniList.ok){
         console.log('[ERROR] Can\'t get search data!');
         return;
     }
-    aniList = JSON.parse(aniList.res.body);
+    
+    const aniList = JSON.parse(getAniList.res.body);
     if(aniList.error){
         console.log(`[ERROR] ${aniList.message}`);
+        return;
+    }
+    
+    if(aniList.data.length > 0){
+        console.log('[INFO] Search Results:');
+        for(let a of aniList.data){
+            await printSeasons(a, params.get('session_id'));
+        }
+        console.log(`\n[INFO] Total results: ${aniList.data.length}\n`);
     }
     else{
-        if(aniList.data.length > 0){
-            console.log('[INFO] Search Results:');
-            for(let a of aniList.data){
-                await printSeasons(a,apiSession);
-            }
-            console.log(`\n[INFO] Total results: ${aniList.data.length}\n`);
-        }
-        else{
-            console.log('[INFO] Nothing Found!');
-        }
+        console.log('[INFO] Nothing Found!');
     }
+    
 }
 
-async function printSeasons(a,apiSession){
+async function printSeasons(a, apiSession){
     console.log(`[SERIES] #${a.series_id} ${a.name}`,(a.year?`(${a.year})`:''));
-    let collParams = new URLSearchParams({
+    const collParams = new URLSearchParams({
         session_id: apiSession,
         series_id:  a.series_id,
         fields:     'collection.collection_id,collection.name',
@@ -317,15 +303,15 @@ async function printSeasons(a,apiSession){
         offset:     0,
         locale:     'enUS',
     });
-    let seasonList = await getData(`${api.collectins}?${collParams.toString()}`,{useProxy:true});
-    if(seasonList.ok){
-        seasonList = JSON.parse(seasonList.res.body);
+    const seasonListReq = await req.getData(`${api.collections}?${collParams.toString()}`,{useProxy:true});
+    if(seasonListReq.ok){
+        const seasonList = JSON.parse(seasonListReq.res.body);
         if(seasonList.error){
             console.log(`  [ERROR] Can't fetch seasons list: ${seasonList.message}`);
         }
         else{
             if(seasonList.data.length>0){
-                for(let s of seasonList.data){
+                for(const s of seasonList.data){
                     console.log(`  [S:${s.collection_id}] ${s.name}`);
                 }
             }
@@ -348,253 +334,213 @@ async function doSearch2(){
         st: 'm'
     });
     // request
-    let reqAniSearch  = await getData(`${api.search2}?${params.toString()}`,{useProxy:true});
+    const reqAniSearch  = await req.getData(`${api.search2}?${params.toString()}`, { useProxy: true });
     if(!reqAniSearch.ok){ return; }
-    let reqRefAniList = await getData(`${api.search1}`,{useProxy:true});
+    const reqRefAniList = await req.getData(`${api.search1}`, { useProxy: true });
     if(!reqRefAniList.ok){ return; }
-    // parse fix
-    let aniSearchSec  = reqAniSearch.res.body.replace(/^\/\*-secure-\n(.*)\n\*\/$/,'$1');
-    let aniRefListSec = reqRefAniList.res.body.replace(/^\/\*-secure-\n(.*)\n\*\/$/,'$1');
-    aniSearchSec = JSON.parse(aniSearchSec);
-    aniRefListSec = JSON.parse(aniRefListSec);
+    
+    const aniSearchSec  = JSON.parse(reqAniSearch.res.body.replace(/^\/\*-secure-\n(.*)\n\*\/$/,'$1'));
+    const aniRefListSec = JSON.parse(reqRefAniList.res.body.replace(/^\/\*-secure-\n(.*)\n\*\/$/,'$1'));
     let totalResults = 0;
-    // data
-    const mainHtml = xhtml2js({ src: '<html>'+aniSearchSec.data.main_html+'</html>', el: 'body' }).$;
-    const results0 = mainHtml.find('p');
-    const results1 = results0.eq(0).text().trim();
-    const results2 = results0.eq(1).text().trim();
-    const resultsStr = results2 != '' ? results2 :
-        results1 != '' ? results1 : 'NOTHING FOUND!';
-    console.log(`[INFO] ${resultsStr}`);
-    // seasons
-    const searchData = mainHtml.find('li');
-    for(let v=0; v<searchData.length; v++){
-        let href  = searchData.eq(v).find('a')[0].attribs.href;
-        let data  = aniRefListSec.data.filter(value => value.link == href).shift();
-        let notLib = href.match(/^\/library\//) ? false : true;
-        if(notLib && data && data.type == 'Series'){
-            if(session.session_id && checkSessId(session.session_id) && !argv.nosess){
-                await printSeasons({series_id: data.id, name: data.name},session.session_id.value);
+    
+    const $ = cheerio.load(`<data>${aniSearchSec.data.main_html}</data>`);
+    const resultHeader = $('p');
+    const resultItems = $('li');
+    
+    if(resultHeader.length < 1){
+        console.log('[INFO] NOTHING FOUND!');
+        return;
+    }
+    
+    for(const infoHeader of resultHeader){
+        console.log('[INFO]', $(infoHeader).text().trim());
+    }
+    
+    for(const item of resultItems){
+        const itemHref = $(item).find('a').attr('href');
+        const itemData = aniRefListSec.data.filter(value => value.link == itemHref).shift();
+        const isNotLib = itemHref.match(/^\/library\//) ? false : true;
+        if(isNotLib && itemData && itemData.type == 'Series'){
+            if(req.session.session_id && req.checkSessId(req.session.session_id) && !argv.nosess){
+                await printSeasons({ series_id: itemData.id, name: itemData.name }, req.session.session_id.value);
             }
             else{
                 console.log('  [ERROR] Can\'t fetch seasons list, session_id cookie required');
             }
             totalResults++;
         }
-        if(notLib && !data){
-            console.log('[SERIES] #??????', href.replace(/^\//,'').replace(/-/g,' '));
+        if(isNotLib && !itemData){
+            console.log('[SERIES] #??????', itemHref.replace(/^\//,'').replace(/-/g,' '));
             console.log('  [ERROR] Can\'t fetch seasons list, not listed in search data');
-            console.log(`  [ERROR] URL: ${domain}${href}`);
+            console.log(`  [ERROR] URL: ${domain.www}${itemHref}`);
             totalResults++;
         }
     }
-    if(totalResults>0){
-        console.log('[INFO] Non-anime results is hidden');
+    
+    console.log('[INFO] Non-anime results is hidden');
+    if(totalResults > 0){
         console.log(`[INFO] Total results: ${totalResults}\n`);
     }
+    
 }
 
-async function getShowById(){
+async function getSeasonById(){
     // request episode list
     const epListRss = `${api.rss_cid}${argv.s}`;
-    const epListReq = await getData(epListRss,{useProxy:true});
-    // request failed
-    if(!epListReq.ok){ return 0; }
-    // set data
+    const epListReq = await req.getData(epListRss, { useProxy: true });
+    if(!epListReq.ok){ return; }
+    
     const epListBody = epListReq.res.body;
-    const epListXML = xhtml2js({ src: epListBody, el: 'channel', isXml: true }).$;
-    // set and show main title // image title
-    const showTitle = (
-        epListXML.find('image title').eq(0).text()
-            ? epListXML.find('image title').eq(0).text()
-            : epListXML.find('title').eq(0).text().replace(/ Episodes$/i,'')
-    );
-    const isSimul   = epListXML.find('crunchyroll\\:simulcast').length > 0 ? true : false;
+    const $ = cheerio.load(epListBody, {
+        normalizeWhitespace: true,
+        xmlMode: true
+    });
+    
+    const imageTitle = $('image title').text();
+    const rssTitle = $('title').eq(0).text();
+    
+    const seasonTitle = imageTitle != '' 
+        ? imageTitle
+        : rssTitle.replace(/ Episodes$/i, '');
+    
+    let isSimul = $('crunchyroll\\:simulcast').length > 0 ? true : false;
+    
+    const epsList  = $('item');
+    const epsListCount = epsList.length;
+    
+    // fix simulcast
+    if(!isSimul && epsListCount > 1){
+        const eps = [
+            epsList.eq(0),
+            epsList.eq(epsListCount - 1),
+        ];
+        const epDate = [];
+        for(const ep of eps){
+            epDate.push(new Date(ep.find('crunchyroll\\:premiumPubDate').text()));
+        }
+        if(epDate[0] > epDate[1]){
+            isSimul = true;
+        }
+    }
+    
     // if dubbed title
-    if(showTitle.match(langsData.dubRegExp)){
-        audDubT = langsData.dubLangs[showTitle.match(langsData.dubRegExp)[1]];
-        console.log(`[INFO] audio language code detected, setted to ${audDubT} for this title`);
+    const matchDub = seasonTitle.match(langsData.dubRegExp);
+    if(matchDub && langsData.dubLanguages[matchDub[1]] != argv.dub){
+        argv.appstore.audDubT = langsData.dubLanguages[matchDub[1]];
+        console.log(`[INFO] audio language code detected, setted to ${argv.appstore.audDubT} for this title\n`);
     }
-    // display title
-    console.log(`[S:${argv.s}] ${showTitle}`,(isSimul?'[simulcast]':''));
-    // parse list
-    const titleEpsList = { media: {}, episodes: [], specials: [], meta: {} };
-    const epsList  = epListXML.find('item');
-    const vdsCount = epsList.length;
+    else{
+        argv.appstore.audDubT = argv.dub;
+    }
+    
+    console.log(`[S:${argv.s}] ${seasonTitle}`, (isSimul ? '[SIMULCAST]' : ''));
+    console.log('[URL]', epListRss);
+    
+    const epNumList = { ep: [], sp: 0 };
+    const epNumLen = { E: 4, S: 3, M: 7 };
     const dateNow = Date.now() + 1;
-    // st num length
-    const epNumLen = { E: 4, S: 3, M: 6 };
-    // create list
-    epsList.each((idx) => {
-        // set index
-        idx = isSimul ? vdsCount - idx - 1 : idx;
-        // add eps nums
-        const videoTitleData = {
-            season:    showTitle,
-            episodeNo: epsList.eq(idx).find('crunchyroll\\:episodeNumber').text(),
-            episode:   epsList.eq(idx).find('crunchyroll\\:episodeTitle').text(),
+    const endPubDateMax = 253368028800000;
+    
+    const doEpsFilter = new epsFilter(epNumLen);
+    const selEps = doEpsFilter.checkFilter(argv.e);
+    const selectedMedia = [];
+    
+    for(let idx in Array(epsListCount).fill()){
+        // init
+        idx = isSimul ? epsListCount - idx - 1 : idx;
+        const epCur = epsList.eq(idx);
+        let isSelected = false;
+        // set data
+        const epMeta = {
+            mediaId:       epCur.find('crunchyroll\\:mediaId').text(),
+            seasonTitle:   seasonTitle,
+            episodeNumber: epCur.find('crunchyroll\\:episodeNumber').text(),
+            episodeTitle:  epCur.find('crunchyroll\\:episodeTitle').text(),
         };
-        let epNumStr = videoTitleData.episodeNo;
-        let epNum = epNumStr;
-        epNum = epNum.match(/^\d+$/) ? epNum.padStart(epNumLen['E'], '0') : epNum;
-        if(titleEpsList.episodes.indexOf(epNum) > -1 || !epNum.match(/^\d+$/) ){
-            epNum = 'S' + (titleEpsList.specials.length + 1).toString().padStart(epNumLen['S'], '0');
-            titleEpsList.specials.push(epNum);
+        // calc dates
+        const epPubDate = {
+            prem: new Date(epCur.find('crunchyroll\\:premiumPubDate').text()),
+            free: new Date(epCur.find('crunchyroll\\:freePubDate').text()),
+            end: new Date(epCur.find('crunchyroll\\:endPubDate').text()),
+        };
+        epPubDate.premLeft = dateNow < epPubDate.prem ? epPubDate.prem - dateNow : 0;
+        epPubDate.freeLeft = dateNow < epPubDate.free ? epPubDate.free - dateNow : 0;
+        epPubDate.endLeft  = dateNow < epPubDate.end  ? epPubDate.end  - dateNow : 0;
+        if(epPubDate.end.getTime() == endPubDateMax){
+            epPubDate.endLeft = -1;
+        }
+        const epAvailable = epPubDate.premLeft == 0 && epPubDate.endLeft != 0 ? true : false;
+        // check media selected
+        const mediaIdPad = 'M' + epMeta.mediaId.toString().padStart(epNumLen['M'], '0');
+        if(selEps.indexOf(mediaIdPad) > -1 && epAvailable){
+            selectedMedia.push(epMeta);
+            isSelected = true;
+        }
+        // find episode numbers
+        let epNum = epMeta.episodeNumber;
+        let isSpecial = false;
+        if(!epNum.match(/^\d+$/) || epNumList.ep.indexOf(parseInt(epNum, 10)) > -1){
+            isSpecial = true;
+            epNumList.sp++;
         }
         else{
-            titleEpsList.episodes.push(epNum);
+            epNumList.ep.push(parseInt(epNum, 10));
         }
-        // add media-episode relation
-        let mediaId = epsList.eq(idx).find('crunchyroll\\:mediaId').text();
-        let mediaIdPad = mediaId.padStart(epNumLen['M'], '0');
-        let epType = epNum.match('S') ? 'specials' : 'episodes';
-        titleEpsList.media[mediaIdPad] = `${epType}:${titleEpsList[epType].length-1}`;
-        // episode info
-        let ssTitle = videoTitleData.season;
-        let epTitle = videoTitleData.episode;
-        let airDate = new Date(epsList.eq(idx).find('crunchyroll\\:premiumPubDate').text());
-        let airFree = new Date(epsList.eq(idx).find('crunchyroll\\:freePubDate').text());
-        let endDate = new Date(epsList.eq(idx).find('crunchyroll\\:endPubDate').text());
-        let subsArr = epsList.eq(idx).find('crunchyroll\\:subtitleLanguages').text();
-        // add data
-        titleEpsList.meta[mediaIdPad] = {
-            m:   mediaId,
-            t:   ssTitle,
-            e:   epNumStr,
-            te:  epTitle,
-            epd: false,
-        };
+        const selEpId = (
+            isSpecial 
+                ? 'S' + epNumList.sp.toString().padStart(epNumLen['S'], '0')
+                : ''  + parseInt(epNum, 10).toString().padStart(epNumLen['E'], '0')
+        );
+        // select episode
+        if(selEps.indexOf(selEpId) > -1 && !isSelected && epAvailable){
+            selectedMedia.push(epMeta);
+            isSelected = true;
+        }
         // print info
-        let listEpTitle = '';
-        listEpTitle += epNumStr ? epNumStr : '';
-        listEpTitle += epNumStr && epTitle ? ' - ' : '';
-        listEpTitle += epTitle ? epTitle : '';
-        listEpTitle = listEpTitle ? listEpTitle : 
-            epsList.eq(idx).find('title').text();
-        console.log(`  [${epNum}|${mediaIdPad}] ${listEpTitle}`);
-        // print dates
-        let dateStrPrem = shlp.dateString(airDate)
-            + ( dateNow < airDate ? ` (in ${shlp.formatTime((airDate-dateNow)/1000)})` : '');
-        let dateStrFree = shlp.dateString(airFree)
-            + ( dateNow < airFree ? ` (in ${shlp.formatTime((airFree-dateNow)/1000)})` : '');
-        if(dateStrFree.match(/in/)){
-            console.log(`   - PremPubDate: ${dateStrPrem}`);
+        const listEpTitle = [
+            epMeta.episodeNumber ? epMeta.episodeNumber : '',
+            epMeta.episodeNumber && epMeta.episodeTitle ? ' - ' : '',
+            epMeta.episodeTitle ? epMeta.episodeTitle : ''
+        ].join('');
+        const premStar = epPubDate.premLeft == 0 && epPubDate.freeLeft > 0 ? '☆ ' : '';
+        const rssSubsStr = epCur.find('crunchyroll\\:subtitleLanguages').text();
+        // show episode
+        console.log(
+            ' %s[%s|%s] %s%s',
+            isSelected ? '✓' : ' ',
+            selEpId,
+            mediaIdPad,
+            premStar,
+            listEpTitle,
+        );
+        if(epPubDate.premLeft > 0){
+            console.log(`   - PremPubDate: ${shlp.dateString(epPubDate.prem)} (in ${shlp.formatTime((epPubDate.premLeft)/1000)})`);
         }
-        console.log(`   - FreePubDate: ${dateStrFree}`);
-        if(endDate < 5000000000000){
-            console.log(`   - EndPubDate:  ${shlp.dateString(endDate)}`);
+        if(epPubDate.freeLeft > 0){
+            console.log(`   - FreePubDate: ${shlp.dateString(epPubDate.free)} (in ${shlp.formatTime((epPubDate.freeLeft)/1000)})`);
         }
-        if(endDate < dateNow){
-            titleEpsList.meta[mediaIdPad].epd = true;
+        if(epPubDate.endLeft != -1){
+            const endedIn = epPubDate.endLeft > 0 ? ` (in ${shlp.formatTime((epPubDate.endLeft)/1000)})` : '';
+            console.log('   - EndPubDate:  %s%s', shlp.dateString(epPubDate.end), endedIn);
         }
-        // subtitles
-        if(subsArr){
-            console.log(`   - Subtitles: ${langsData.parseRssSubsString(subsArr)}`);
+        if(rssSubsStr != ''){
+            console.log('   - Subtitles:', langsData.parseRssSubtitlesString(rssSubsStr));
         }
-    });
+    }
     
-    let inputEps = typeof argv.e != 'undefined'
-        ? argv.e.toString().split(',') : [];
-    let inputEpsRange = [];
-    
-    if(inputEps.length<1){
-        console.log('\n[INFO] Episodes not selected!\n');
+    if(selectedMedia.length < 1){
+        console.log('\n[INFO] Videos not selected!\n');
         return;
     }
     
-    // selectors
-    const selData = { media: [], eps: [] };
-    const epRexVr = `^(?:E?\\d{1,${epNumLen['E']}}|S\\d{1,${epNumLen['S']}}|M\\d{1,${epNumLen['M']}})$`;
-    const epRegex = new RegExp (epRexVr);
+    argv.appstore.isBatch = selectedMedia.length > 1 ? true : false;
     
-    // const filter wrong numbers
-    inputEps = inputEps.map((e) => {
-        // conver to uppercase
-        e = e.toUpperCase();
-        // if range
-        if(e.match('-') && e.split('-').length == 2){
-            let eRange = e.split('-');
-            let mch1 = eRange[0].match(epRegex);
-            if (!mch1) return '';
-            let epLetter = eRange[0].match(/(?:E|S|M)/) ? eRange[0].match(/(?:E|S|M)/)[0] : 'E';
-            let mch2 = eRange[1].match(new RegExp (`^\\d{1,${epNumLen[epLetter]}}$`));
-            if (!mch2) return '';
-            eRange[0] = eRange[0].replace(/(?:E|S|M)/,'');
-            eRange[0] = parseInt(eRange[0]);
-            eRange[1] = parseInt(eRange[1]);
-            if (eRange[0] > eRange[1]) return epLetter + eRange[0];
-            let rangeLength = eRange[1] - eRange[0] + 1;
-            let epsRangeArr = Array(rangeLength).fill(0).map((x, y) => x + y + eRange[0]);
-            epsRangeArr.forEach((i)=>{
-                let selEpStr = epLetter + i.toString().padStart(epNumLen[epLetter],'0');
-                inputEpsRange.push(selEpStr);
-            });
-            return '';
-        }
-        else if(e.match(epRegex)){
-            return e;
-        }
-        return '';
-    });
-    
-    // remove empty and duplicates
-    inputEps = [...new Set(inputEps.concat(inputEpsRange))];
-    const mediaList = Object.keys(titleEpsList.media).sort();
     console.log();
-    
-    // select episodes
-    inputEps.map((e) => {
-        if(e.match(/M/)){
-            e = e.replace(/M/,'').padStart(epNumLen['M'],'0');
-            if(selData.media.indexOf(e) > -1) return '';
-            let idx = mediaList.indexOf(e);
-            if(idx > -1 && selData.media.indexOf(e) < 0 && !titleEpsList.meta[e].epd){
-                let epArr = titleEpsList.media[e].split(':');
-                selData.eps.push(titleEpsList[epArr[0]][epArr[1]]);
-                selData.media.push(e);
-            }
-            if(titleEpsList.meta[e].epd){
-                let mMeta = titleEpsList.meta[e];
-                console.log(`[INFO] Skipped due EndPubDate: [${mMeta.m}] ${mMeta.t} - ${mMeta.e} - ${mMeta.te}`);
-            }
-        }
-        else{
-            if(e == '') return '';
-            let eLetter = e.match(/S/) ? 'S' : 'E';
-            e = (eLetter == 'S' ? 'S' : '') + e.replace(/E|S/, '').padStart(epNumLen[eLetter], '0');
-            if(selData.eps.indexOf(e) > -1) return '';
-            let seqArr = eLetter == 'S' ? 'specials' : 'episodes';
-            let seqIdx = titleEpsList[seqArr].indexOf(e);
-            if(seqIdx > -1){
-                let idx = Object.values(titleEpsList.media).indexOf(`${seqArr}:${seqIdx}`);
-                let msq = mediaList[idx];
-                if(selData.media.indexOf(msq) < 0 && !titleEpsList.meta[msq].epd){
-                    selData.media.push(msq);
-                    selData.eps.push(e);
-                }
-                if(titleEpsList.meta[msq].epd){
-                    let mMeta = titleEpsList.meta[msq];
-                    console.log(`[INFO] Skipped due EndPubDate: [${mMeta.m}] ${mMeta.t} - ${mMeta.e} - ${mMeta.te}`);
-                }
-            }
-        }
-    });
-    
-    // display
-    if(selData.eps.length < 1){
-        console.log('[INFO] Episodes not selected!\n');
-        return;
+    for(const m of selectedMedia){
+        argv.dub = argv.appstore.audDubT;
+        getMedia(m);
     }
-    selData.eps.sort();
-    console.log('[INFO] Selected Episodes:', selData.eps.join(', ')+'\n');
-    const selMedia = selData.media;
     
-    // start selecting from list
-    if(selMedia.length > 0){
-        for(let sm of selMedia){
-            await getMedia(titleEpsList.meta[sm]);
-        }
-    }
 }
 
 async function getMediaById(){
@@ -604,7 +550,7 @@ async function getMediaById(){
     e.map((e) => {
         if(e.match('-') && e.split('-').length == 2){
             let eRange = e.split('-');
-            if(eRange[0].match(/^m\d{1,6}$/i) && eRange[1].match(/^\d{1,6}$/)){
+            if(eRange[0].match(/^m\d{1,8}$/i) && eRange[1].match(/^\d{1,8}$/)){
                 eRange[0] = eRange[0].replace(/^m/i,'');
                 eRange[0] = parseInt(eRange[0]);
                 eRange[1] = parseInt(eRange[1]);
@@ -621,15 +567,15 @@ async function getMediaById(){
                 }
             }
         }
-        else if(e.match(/^m\d{1,6}$/i)){
+        else if(e.match(/^m\d{1,8}$/i)){
             inpMedia.push(parseInt(e.replace(/^m/i,'')));
         }
     });
     inpMedia = [...new Set(inpMedia)].splice(1);
     if(inpMedia.length > 0){
         console.log('[INFO] Selected media:', inpMedia.join(', '), '\n');
-        for(let mid of inpMedia){
-            await getMedia({ m: mid });
+        for(let id of inpMedia){
+            await getMedia({ mediaId: id });
         }
     }
     else{
@@ -637,44 +583,22 @@ async function getMediaById(){
     }
 }
 
+
 async function getMedia(mMeta){
     
-    let mediaName = mMeta.t && mMeta.e && mMeta.te ? `${mMeta.t} - ${mMeta.e} - ${mMeta.te}` : '...';
-    console.log(`Requesting: [${mMeta.m}] ${mediaName}`);
+    let mediaName = '...';
+    if(mMeta.seasonTitle && mMeta.episodeNumber && mMeta.episodeTitle){
+        mediaName = `${mMeta.seasonTitle} - ${mMeta.episodeNumber} - ${mMeta.episodeTitle}`;
+    }
     
-    const mediaPage = await getData(`${api.media_page}${mMeta.m}`, {useProxy:true});
+    console.log(`[INFO] Requesting: [${mMeta.mediaId}] ${mediaName}\n`);
+    
+    const epUrl = `${api.media_page}${mMeta.mediaId}?skip_wall=1`;
+    const mediaPage = await req.getData(epUrl, { useProxy: true });
     if(!mediaPage.ok){
         console.log('[ERROR] Failed to get video page!');
         return;
     }
-    
-    const contextData = mediaPage.res.body.match(/({"@context":.*)(<\/script>)/);
-    
-    if(!contextData){
-        console.log('[ERROR] Something goes wrong...');
-        if(mediaPage.res.url.match(betaSite)){
-            await optOutBeta();
-        }
-        process.exit(1);
-    }
-    
-    const contextJson = JSON.parse(contextData[1]);
-    const eligibleRegion = contextJson.potentialAction
-        .actionAccessibilityRequirement.eligibleRegion;
-    
-    const vHtml = chio.load(mediaPage.res.body);
-    const ccEl = vHtml('#footer_country_flag');
-    
-    const ccLocUserArr = ccEl.attr('src').split('/');
-    const ccLocUser = ccLocUserArr[ccLocUserArr.length-1].split('.')[0].toUpperCase();
-    console.log('[INFO] Your region:', ccLocUser, ccEl.attr('alt'));
-    
-    const userDetect = mediaPage.res.body.match(/\$\.extend\(traits, (.*)\);/);
-    const curUser = userDetect ? JSON.parse(userDetect[1]) : {'username': 'anonimous'};
-    console.log('[INFO] Your account:', curUser.username, '\n');
-    
-    const availDetect = eligibleRegion.filter((r)=>{ return r.name == ccLocUser; });
-    const isAvailVideo = availDetect.length > 0 ? true : false;
     
     // page msgs
     let msgItems = mediaPage.res.body.match(/Page.messaging_box_controller.addItems\((.*)\);/);
@@ -691,9 +615,45 @@ async function getMedia(mMeta){
             msgItemsArr.push(`  [${m.type}] ${m.message_body.replace(/<[^>]*>?/gm, '')}`);
         }
         msgItemsArr = [...new Set(msgItemsArr)];
-        console.log(msgItemsArr.join('\n'),'\n');
+        console.log(msgItemsArr.join('\n'), '\n');
     }
     // --
+    
+        
+    const contextData = mediaPage.res.body.match(/({"@context":.*)(<\/script>)/);
+    
+    if(!contextData){
+        console.log('[ERROR] Something goes wrong...');
+        if(new URL(mediaPage.res.url).origin == domain.www_beta){
+            await optOutBeta();
+            process.exit(1);
+        }
+        return;
+    }
+    
+    const contextJson = JSON.parse(contextData[1]);
+    const eligibleRegion = contextJson.potentialAction
+        .actionAccessibilityRequirement.eligibleRegion;
+    
+    const $ = cheerio.load(mediaPage.res.body, {
+        normalizeWhitespace: true,
+    });
+    
+    const flagEl = $('#footer_country_flag');
+    
+    const ccLoc = {
+        code: flagEl.attr('src').split('/').slice(-1)[0].split('.')[0].toUpperCase(),
+        name: flagEl.attr('alt'),
+    };
+    
+    console.log('[INFO] Your region:', ccLoc.code, ccLoc.name);
+    
+    const userDetect = mediaPage.res.body.match(/\$\.extend\(traits, (.*)\);/);
+    const curUser = userDetect ? JSON.parse(userDetect[1]) : { 'username': 'anonymous' };
+    console.log('[INFO] Your account:', curUser.username, '\n');
+    
+    const availDetect = eligibleRegion.filter((r) => { return r.name == ccLoc.user; });
+    const isAvailVideo = availDetect.length > 0 ? true : false;
     
     let mediaData = mediaPage.res.body.match(/vilos.config.media = \{(.*)\};/);
     if(!mediaData && !isAvailVideo){
@@ -714,293 +674,239 @@ async function getMedia(mMeta){
     }
     
     if(mediaName == '...'){
-        mMeta.t = mMeta.t ? mMeta.t : contextJson.partOfSeason.name;
-        mMeta.e = mMeta.e ? mMeta.e : mediaData.metadata.episode_number;
-        mMeta.te = mMeta.te ? mMeta.te : mediaData.metadata.title;
-        mMeta.epd = false;
+        mMeta.seasonTitle   = mMeta.seasonTitle   ? mMeta.seasonTitle   : contextJson.partOfSeason.name;
+        mMeta.episodeNumber = mMeta.episodeNumber ? mMeta.episodeNumber : mediaData.metadata.episode_number;
+        mMeta.episodeTitle  = mMeta.episodeTitle  ? mMeta.episodeTitle  : mediaData.metadata.title;
         // show name
-        mediaName = `${mMeta.t} - ${mMeta.e} - ${mMeta.te}`;
-        console.log(`Requesting: [${mMeta.m}] ${mediaName}`);
+        mediaName = `${mMeta.seasonTitle} - ${mMeta.episodeNumber} - ${mMeta.episodeTitle}`;
+        console.log('[INFO] Requested: [%s] %s\n', mMeta.mediaId, mediaName);
     }
     
-    audDubE = '';
-    if(audDubT == '' && mMeta.te.match(langsData.dubRegExp)){
-        audDubE = langsData.dubLangs[mMeta.te.match(langsData.dubRegExp)[1]];
-        console.log(`[INFO] audio language code detected, setted to ${audDubE} for this episode`);
+    let epNum = mediaData.metadata.episode_number ? mediaData.metadata.episode_number : mMeta.episodeNumber;
+    if(epNum != '' && epNum !== null){
+        epNum = epNum.match(/^\d+$/) ? epNum.padStart(argv.el, '0') : epNum;
     }
     
-    let epNum = mMeta.e;
-    let metaEpNum = mediaData ? mediaData.metadata.episode_number : epNum.replace(/^E/,'');
-    if(metaEpNum != '' && metaEpNum !== null){
-        epNum = metaEpNum.match(/^\d+$/) ? metaEpNum.padStart(argv.el,'0') : metaEpNum;
-    }
+    argv.appstore.fn = {};
+    argv.appstore.fn.title = argv.t ? argv.t : mMeta.seasonTitle,
+    argv.appstore.fn.epnum = !argv.appstore.isBatch && argv.ep ? argv.ep : epNum;
+    argv.appstore.fn.epttl = mMeta.episodeTitle;
+    argv.appstore.fn.out   = fnOutputGen();
     
-    if(typeof argv.q == 'object' && argv.q.length > 1){
-        argv.q = argv.q[argv.q.length-1];
-    }
+    let streams = mediaData.streams ? mediaData.streams : [];
+    let hsLangs = [];
     
-    fnTitle = argv.t ? argv.t : mMeta.t;
-    fnEpNum = !isBatch && argv.ep ? argv.ep : epNum;
-    fnEpTitl = mMeta.te;
-    fnSuffix = argv.suffix.replace('SIZEp', argv.q);
-    fnOutput = fnOutputGen();
-    
-    let streams    = mediaData ? mediaData.streams : [],
-        streamKey  = '';
-    let isClip     = false,
-        hlsStream  = '';
-    
-    if(argv.oldstreams){
-        let videoSrcStr = mediaPage.res.body.match(/<link rel="video_src" href="(.*)" \/>/);
-        if(videoSrcStr){
-            isClip = true;
-            let parseCfg    = new URL(videoSrcStr[1]).searchParams;
-            let parseCfgUrl = parseCfg.get('config_url') + '&current_page=' + domain;
-            let streamData  = await getData(parseCfgUrl.replace(/http:/, 'https:'), {useProxy: argv.ssp});
-            if(streamData.ok){
-                let videoDataBody = streamData.res.body.replace(/\n/g,'').replace(/ +/g,' ');
-                let xmlMediaId    = videoDataBody.match(/<media_id>(\d+)<\/media_id>/);
-                let xmlFileUrl    = videoDataBody.match(/<file>(.*)<\/file>/);
-                let xmlError      = videoDataBody.match(/<error>(.*)<\/error>/);
-                let countdown     = videoDataBody.match(/<countdown_seconds>(\d+)<\/countdown_seconds>/);
-                if(countdown && countdown[1] && countdown[1] > 0){
-                    console.log('[INFO] Episode not aired yet!');
-                    return;
-                }
-                if(xmlMediaId && xmlMediaId[1] && xmlMediaId[1] != mMeta.m){
-                    mMeta.m = xmlMediaId[1];
-                }
-                if(xmlFileUrl && xmlFileUrl[1]){
-                    streamKey = 'api_hls';
-                    hlsStream = xmlFileUrl[1].replace(/&amp;/g,'&');
-                    console.log('[INFO] Full raw stream found!');
-                }
-                else if(xmlError && xmlError[1]){
-                    isClip = false;
-                    let xmlErrorData = xmlError[1].trim().match(/<code>(\d+)<\/code>(.*)<msg>(.*)<\/msg>/);
-                    console.log(`[ERROR] CODE ${xmlErrorData[1]}: ${xmlErrorData[3]}`);
-                }
-            }
-        }
-    }
-    else if(streams.length>0){
-        let hlsStreams = {};
-        let hlsStreamIndex = 1;
-        // streams.reverse();
-        // set hardsubs
-        let hsLang = argv.hslang ? argv.hslang : null;
-        if(langsData.subsLangsFilter.indexOf(hsLang) > 0 && ['all', 'none'].indexOf(hsLang) < 0){
-            console.log('[INFO] Selecting stream with %s hardsubs', hsLang);
-            argv.dlsubs = 'none';
-        }
-        else{
-            console.log('[INFO] Selecting raw stream');
-            hsLang = null;
-        }
-        // --
-        for(let s in streams){
-            
-            let isHls = streams[s].format.match(/hls/)
-                && !streams[s].format.match(/drm/) ? true : false;
-            let checkParams = isHls && streams[s].hardsub_lang === hsLang;
-            if(streams[s].url.match(/clipFrom/)){
-                isClip = true;
-            }
-            if(checkParams && !isClip){
-                let sKeyStr = `${streams[s].format}/${streams[s].audio_lang}`;
-                hlsStreams[sKeyStr] = streams[s].url;
-                console.log(`[INFO] Full stream found! (${hlsStreamIndex}: ${sKeyStr})`);
-                hlsStreamIndex++;
-            }
-        }
-        let hlsStreamKeys     = Object.keys(hlsStreams);
-        if(hlsStreamKeys.length>0){
-            argv.kstream = argv.kstream > hlsStreamKeys.length ? 1 : argv.kstream;
-            for(let k in hlsStreamKeys){
-                k = parseInt(k);
-                if(hlsStream == '' || argv.kstream == k + 1){
-                    streamKey = hlsStreamKeys[k];
-                    hlsStream = hlsStreams[streamKey];
-                }
-            }
-        }
-        else{
-            hlsStream = '';
-        }
-    }
-    else{
+    if(streams.length < 1){
         console.log('[WARN] No streams found!');
+        return;
     }
     
-    if(argv.nullstream){
-        hlsStream = '';
+    streams = streams.filter((s) => {
+        if(!s.format.match(/hls/) || s.format.match(/drm/) || s.format.match(/trailer/)){
+            return false;
+        }
+        s.hardsub_lang = s.hardsub_lang 
+            ? langsData.fixAndFindCrLC(s.hardsub_lang).locale
+            : s.hardsub_lang;
+        if(s.hardsub_lang && hsLangs.indexOf(s.hardsub_lang) < 0){
+            hsLangs.push(s.hardsub_lang);
+        }
+        return true;
+    });
+    
+    if(streams.length < 1 && contextJson.potentialAction.actionAccessibilityRequirement.category == 'subscription'){
+        console.log('[WARN] No full streams found! Premium locked!');
+        return;
     }
     
-    // reset playlist
-    audDubP = '';
+    if(streams.length < 1){
+        console.log('[WARN] No full streams found!');
+        return;
+    }
     
-    // download stream
-    if(!isAvailVideo){
-        console.log('[ERROR] No available full raw stream! Video not available for your region!');
-        argv.skipmux = true;
-    }
-    else if(hlsStream == '' && !isClip){
-        console.log('[ERROR] No available full raw stream! Session expired?');
-        argv.skipmux = true;
-    }
-    else if(hlsStream == '' && isClip){
-        console.log('[ERROR] No available full raw stream! Only clip streams available.');
-        argv.skipmux = true;
+    hsLangs = langsData.sortTags(hsLangs);
+    
+    streams = streams.map((s) => {
+        s.audio_lang = langsData.findLang(langsData.fixLanguageTag(s.audio_lang)).code;
+        s.hardsub_lang = s.hardsub_lang ? s.hardsub_lang : '-';
+        s.type = `${s.format}/${s.audio_lang}/${s.hardsub_lang}`;
+        return s;
+    });
+    
+    let dlFailed = false;
+    
+    if(argv.hslang != 'none'){
+        if(hsLangs.indexOf(argv.hslang) > -1){
+            console.log('[INFO] Selecting stream with %s hardsubs', argv.hslang);
+            streams = streams.filter((s) => {
+                if(s.hardsub_lang == '-'){
+                    return false;
+                }
+                return s.hardsub_lang == argv.hslang ? true : false;
+            });
+        }
+        else{
+            console.log('[WARN] Selected stream with %s hardsubs not available', argv.hslang);
+            if(hsLangs.length > 0){
+                console.log('[WARN] Try other hardsubs stream:', hsLangs.join(', '));
+            }
+            dlFailed = true;
+        }
     }
     else{
-        // get
-        console.log('[INFO] Downloading video...');
-        let streamKeyStr = streamKey != '' ? `(${streamKey})` : '';
-        let streamUrlTxt = argv.ssu ? hlsStream : '';
-        // check lng
-        let streamDubLang = typeof streamKey == 'string' ? streamKey.split('/') : '';
-        if(streamDubLang[1] && langsData.langCodes[streamDubLang[1]]){
-            let PlAudioLang = langsData.langCodes[streamDubLang[1]];
-            if(audDubT == '' && audDubE == '' && PlAudioLang.code != argv.dub){
-                audDubP = PlAudioLang.code;
-                console.log(`[INFO] audio language code detected, setted to ${PlAudioLang.lang} for this episode`);
+        streams = streams.filter((s) => {
+            if(s.hardsub_lang != '-'){
+                return false;
             }
+            return true;
+        });
+        if(streams.length < 1){
+            console.log('[WARN] Raw streams not available!');
+            if(hsLangs.length > 0){
+                console.log('[WARN] Try hardsubs stream:', hsLangs.join(', '));
+            }
+            dlFailed = true;
         }
-        // request
-        console.log('[INFO] Playlist URL:', streamUrlTxt, streamKeyStr);
-        let streamPlaylist = await getData(hlsStream, {useProxy: argv.ssp});
-        if(!streamPlaylist.ok){
-            console.log(streamPlaylist);
+        console.log('[INFO] Selecting raw stream');
+    }
+    
+    let curStream;
+    if(!dlFailed){
+        argv.kstream = typeof argv.kstream == 'number' ? argv.kstream : 1;
+        argv.kstream = argv.kstream > streams.length ? 1 : argv.kstream;
+        
+        streams.map((s, i) => {
+            const isSelected = argv.kstream == i + 1 ? '✓' : ' ';
+            console.log('[INFO] Full stream found! (%s%s: %s )', isSelected, i + 1, s.type); 
+        });
+        
+        console.log('[INFO] Downloading video...');
+        curStream = streams[argv.kstream-1];
+        
+        if(argv.dub != curStream.audio_lang){
+            argv.dub = curStream.audio_lang;
+            console.log(`[INFO] audio language code detected, setted to ${curStream.audio_lang} for this episode`);
+        }
+        
+        const streamUrlTxt = argv['show-stream-url'] ? curStream.url : '[HIDDEN]';
+        console.log('[INFO] Playlists URL: %s (%s)', streamUrlTxt, curStream.type);
+    }
+    
+    if(!argv.skipdl && !dlFailed){
+        const streamPlaylistsReq = await req.getData(curStream.url, {useProxy: argv['use-proxy-streaming']});
+        if(!streamPlaylistsReq.ok){
             console.log('[ERROR] CAN\'T FETCH VIDEO PLAYLISTS!');
             dlFailed = true;
         }
         else{
-            // parse
-            let plQualityLinkList = m3u8(streamPlaylist.res.body);
-            // variables
+            const streamPlaylists = m3u8(streamPlaylistsReq.res.body);
             let plServerList = [],
                 plStreams    = {},
                 plQualityStr = [],
                 plMaxQuality = 240;
-            // set variables
-            for(let s of plQualityLinkList.playlists){
-                let plResolution = s.attributes.RESOLUTION.height;
-                let plResText    = `${plResolution}p`;
+            for(const pl of streamPlaylists.playlists){
+                // set quality
+                let plResolution     = pl.attributes.RESOLUTION.height;
+                let plResolutionText = `${plResolution}p`;
+                // set max quality
                 plMaxQuality = plMaxQuality < plResolution ? plResolution : plMaxQuality;
-                let plUrlDl  = s.uri;
-                let plServer;
-                
-                plServer = plUrlDl.split('/')[2];
-                if(plUrlDl.match(/&cdn=([a-z-]+)/)){
-                    plServer = `${plUrlDl.split('/')[2]} (${plUrlDl.match(/&cdn=([a-z-]+)/)[1]})`;
+                // parse uri
+                let plUri = new URL(pl.uri);
+                let plServer = plUri.hostname;
+                // set server list
+                if(plUri.searchParams.get('cdn')){
+                    plServer += ` (${plUri.searchParams.get('cdn')})`;
                 }
-                
                 if(!plServerList.includes(plServer)){
                     plServerList.push(plServer);
                 }
-                
+                // add to server
                 if(!Object.keys(plStreams).includes(plServer)){
                     plStreams[plServer] = {};
                 }
-                
-                if(plStreams[plServer][plResText] && plStreams[plServer][plResText] != plUrlDl && typeof plStreams[plServer][plResText] != 'undefined'){
+                if(
+                    plStreams[plServer][plResolutionText]
+                    && plStreams[plServer][plResolutionText] != pl.uri
+                    && typeof plStreams[plServer][plResolutionText] != 'undefined'
+                ){
                     console.log(`[WARN] Non duplicate url for ${plServer} detected, please report to developer!`);
                 }
                 else{
-                    plStreams[plServer][plResText] = plUrlDl;
+                    plStreams[plServer][plResolutionText] = pl.uri;
                 }
-                
                 // set plQualityStr
-                let plBandwidth  = Math.round(s.attributes.BANDWIDTH/1024);
-                if(plResolution<1000){
-                    plResolution = plResolution.toString().padStart(4,' ');
+                let plBandwidth  = Math.round(pl.attributes.BANDWIDTH/1024);
+                if(plResolution < 1000){
+                    plResolution = plResolution.toString().padStart(4, ' ');
                 }
                 let qualityStrAdd   = `${plResolution}p (${plBandwidth}KiB/s)`;
-                let qualityStrRegx  = new RegExp(qualityStrAdd.replace(/(:|\(|\)|\/)/g,'\\$1'),'m');
+                let qualityStrRegx  = new RegExp(qualityStrAdd.replace(/(:|\(|\)|\/)/g, '\\$1'), 'm');
                 let qualityStrMatch = !plQualityStr.join('\r\n').match(qualityStrRegx);
                 if(qualityStrMatch){
                     plQualityStr.push(qualityStrAdd);
                 }
-                
             }
-
-            argv.q = argv.q == 'max' ? `${plMaxQuality}p` : argv.q;
             
-            let plSelectedServer = plServerList[argv.x-1];
+            argv.x = argv.x > plServerList.length ? 1 : argv.x;
+            argv.q = argv.q == 'max' ? `${plMaxQuality}p` : argv.q;
+            argv.appstore.fn.out = fnOutputGen();
+            
+            let plSelectedServer = plServerList[argv.x - 1];
             let plSelectedList   = plStreams[plSelectedServer];
-            let videoUrl = argv.x < plServerList.length+1 && plSelectedList[argv.q] ? plSelectedList[argv.q] : '';
+            let selPlUrl = plSelectedList[argv.q] ? plSelectedList[argv.q] : '';
             
             plQualityStr.sort();
             console.log(`[INFO] Servers available:\n\t${plServerList.join('\n\t')}`);
             console.log(`[INFO] Available qualities:\n\t${plQualityStr.join('\n\t')}`);
             
-            if(videoUrl != ''){
+            if(selPlUrl != ''){
                 console.log(`[INFO] Selected quality: ${argv.q} @ ${plSelectedServer}`);
-                if(argv.ssu){
-                    console.log('[INFO] Stream URL:',videoUrl);
+                if(argv['show-stream-url']){
+                    console.log('[INFO] Stream URL:', selPlUrl);
                 }
-                if(argv.ssuex){
-                    console.log('[INFO] Streams Data:', plStreams);
-                }
-                // filename
-                fnSuffix = argv.suffix.replace('SIZEp',argv.q);
-                fnOutput = fnOutputGen();
-                console.log(`[INFO] Output filename: ${fnOutput}`);
-                if(argv.skipdl){
-                    console.log('[INFO] Video download skipped!\n');
+                console.log(`[INFO] Output filename: ${argv.appstore.fn.out}`);
+                const chunkPage = await req.getData(selPlUrl, {useProxy: argv['use-proxy-streaming']});
+                if(!chunkPage.ok){
+                    console.log('[ERROR] CAN\'T FETCH VIDEO PLAYLIST!');
+                    dlFailed = true;
                 }
                 else{
-                    // request
-                    let chunkPage = await getData(videoUrl,{useProxy: argv.ssp});
-                    if(!chunkPage.ok){
-                        console.log('[ERROR] CAN\'T FETCH VIDEO PLAYLIST!');
-                        argv.skipmux = true;
+                    const chunkPlaylist = m3u8(chunkPage.res.body);
+                    let proxyHLS;
+                    if(argv.proxy && argv['use-proxy-streaming']){
+                        try{
+                            proxyHLS = {};
+                            proxyHLS.url = reqModule.buildProxy(argv.proxy, argv['proxy-auth']);
+                            proxyHLS.url = proxyHLS.url.toString();
+                        }
+                        catch(e){
+                            console.log(`\n[WARN] Not valid proxy URL${e.input?' ('+e.input+')':''}!`);
+                            console.log('[WARN] Skiping...');
+                        }
                     }
-                    else{
-                        let chunkList = m3u8(chunkPage.res.body);
-                        chunkList.baseUrl = videoUrl.split('/').slice(0, -1).join('/')+'/';
-                        // proxy
-                        let proxyHLS = false;
-                        if(argv.proxy && !argv.ssp){
-                            try{
-                                proxyHLS = {};
-                                proxyHLS.url = buildProxy(argv.proxy, argv['proxy-auth']);
-                                proxyHLS.url = proxyHLS.url.toString();
-                            }
-                            catch(e){
-                                console.log(`\n[WARN] Not valid proxy URL${e.input?' ('+e.input+')':''}!`);
-                                console.log('[WARN] Skiping...');
-                                proxyHLS = false;
-                            }
-                        }
-                        let totalParts = chunkList.segments.length;
-                        let mathParts  = Math.ceil(totalParts / argv.tsparts);
-                        let mathMsg    = `(${mathParts}*${argv.tsparts})`;
-                        console.log('[INFO] Total parts in stream:', totalParts, mathMsg);
-                        let tsFile = path.join(cfg.dir.content, fnOutput);
-                        let streamdlParams = {
-                            fn: `${tsFile}.ts`,
-                            m3u8json: chunkList,
-                            baseurl: chunkList.baseUrl,
-                            pcount: argv.tsparts,
-                            partsOffset: 0,
-                            proxy: ( proxyHLS ? proxyHLS : false),
-                        };
-                        let dldata = await new streamdl(streamdlParams).download();
-                        if(!dldata.ok){
-                            fs.writeFileSync(`${tsFile}.ts.resume`, JSON.stringify(dldata.parts));
-                            console.log(`[ERROR] DL Stats: ${JSON.stringify(dldata.parts)}\n`);
-                            dlFailed = true;
-                        }
-                        else if(fs.existsSync(`${tsFile}.ts.resume`) && dldata.ok){
-                            fs.unlinkSync(`${tsFile}.ts.resume`);
-                        }
+                    let totalParts = chunkPlaylist.segments.length;
+                    let mathParts  = Math.ceil(totalParts / argv.tsparts);
+                    let mathMsg    = `(${mathParts}*${argv.tsparts})`;
+                    console.log('[INFO] Total parts in stream:', totalParts, mathMsg);
+                    let tsFile = path.join(cfg.dir.content, argv.appstore.fn.out);
+                    let streamdlParams = {
+                        fn: `${tsFile}.ts`,
+                        m3u8json: chunkPlaylist,
+                        // baseurl: chunkPlaylist.baseUrl,
+                        pcount: argv.tsparts,
+                        partsOffset: 0,
+                        proxy: proxyHLS || false,
+                    };
+                    let dlStreamByPl = await new streamdl(streamdlParams).download();
+                    if(!dlStreamByPl.ok){
+                        fs.writeFileSync(`${tsFile}.ts.resume`, JSON.stringify(dlStreamByPl.parts));
+                        console.log(`[ERROR] DL Stats: ${JSON.stringify(dlStreamByPl.parts)}\n`);
+                        dlFailed = true;
+                    }
+                    else if(fs.existsSync(`${tsFile}.ts.resume`) && dlStreamByPl.ok){
+                        fs.unlinkSync(`${tsFile}.ts.resume`);
                     }
                 }
-            }
-            else if(argv.x > plServerList.length){
-                console.log('[ERROR] Server not selected!\n');
-                dlFailed = true;
             }
             else{
                 console.log('[ERROR] Quality not selected!\n');
@@ -1008,55 +914,62 @@ async function getMedia(mMeta){
             }
         }
     }
+    else if(argv.skipdl){
+        console.log('[INFO] Downloading skipped!');
+    }
     
     // fix max quality for non streams
     if(argv.q == 'max'){
         argv.q = '1080p';
-        fnSuffix = argv.suffix.replace('SIZEp', argv.q);
-        fnOutput = fnOutputGen();
+        argv.appstore.fn.out = fnOutputGen();
     }
     
-    // download subs
-    sxList = [];
-    if(!argv.skipsubs && argv.dlsubs != 'none'){
-        console.log('[INFO] Downloading subtitles...');
-        if(mediaData.subtitles.length < 1){
-            console.log('[WARN] Can\'t find urls for subtitles!');
-        }
-        else if(mediaData.subtitles.length > 0){
-            mediaData.subtitles = langsData.sortSubtitles(mediaData.subtitles);
-            for(let si in mediaData.subtitles){
-                let s = mediaData.subtitles[si];
-                let cl = langsData.langCodes[s.language];
-                let sxData = {};
-                sxData.file = langsData.subsFile(fnOutput, si, cl);
-                sxData.langExtCode = s.language;
-                sxData.langCode = cl.code;
-                sxData.langTag = cl.tag;
-                sxData.langName = cl.name;
-                sxData.langStr = cl.local;
-                if(argv.dlsubs.includes('all') || argv.dlsubs.includes(s.language)){
-                    let subsAssApi = await getData(s.url, {useProxy:  argv.ssp});
-                    if(subsAssApi.ok){
-                        let sBody = '\ufeff' + subsAssApi.res.body;
+    argv.appstore.sxList = [];
+    
+    if(argv.dlsubs.indexOf('all') > -1){
+        argv.dlsubs = ['all'];
+    }
+    
+    if(!argv.skipsubs && argv.dlsubs.indexOf('none') == -1){
+        if(mediaData.subtitles && mediaData.subtitles.length > 0){
+            mediaData.subtitles = mediaData.subtitles.map((s) => {
+                const subLang = langsData.fixAndFindCrLC(s.language);
+                s.locale = subLang;
+                s.language = subLang.locale;
+                s.title = subLang.language;
+                return s;
+            });
+            const subsArr = langsData.sortSubtitles(mediaData.subtitles, 'language');
+            for(let subsIndex in subsArr){
+                const subsItem = subsArr[subsIndex];
+                const langItem = subsItem.locale;
+                const sxData = {};
+                sxData.language = langItem;
+                sxData.file = langsData.subsFile(argv.appstore.fn.out, subsIndex, langItem);
+                sxData.path = path.join(cfg.dir.content, sxData.file);
+                if(argv.dlsubs.includes('all') || argv.dlsubs.includes(langItem.locale)){
+                    const subsAssReq = await req.getData(subsItem.url, {useProxy:  argv['use-proxy-streaming']});
+                    if(subsAssReq.ok){
+                        const sBody = '\ufeff' + subsAssReq.res.body;
                         sxData.title = sBody.split('\r\n')[1].replace(/^Title: /, '');
+                        sxData.title = `${langItem.language} / ${sxData.title}`;
                         sxData.fonts = fontsData.assFonts(sBody);
                         fs.writeFileSync(path.join(cfg.dir.content, sxData.file), sBody);
                         console.log(`[INFO] Subtitle downloaded: ${sxData.file}`);
-                        sxList.push(sxData);
+                        argv.appstore.sxList.push(sxData);
                     }
                     else{
                         console.log(`[WARN] Failed to download subtitle: ${sxData.file}`);
                     }
                 }
             }
-            if(sxList.length > 0){
-                langsData.subsStr(sxList);
-            }
+        }
+        else{
+            console.log('[WARN] Can\'t find urls for subtitles!');
         }
     }
     else{
-        console.log('[INFO] Subtitles downloading skipped');
+        console.log('[INFO] Subtitles downloading skipped!');
     }
     
     // go to muxing
@@ -1067,165 +980,76 @@ async function getMedia(mMeta){
         console.log();
     }
     
-    dlFailed = false;
-    return;
-    
 }
 
 async function muxStreams(){
-    // muxing video path prefix
-    let muxFile = path.join(cfg.dir.content, fnOutput);
+    const merger = await appMux.checkMerger(cfg.bin, argv.mp4);
+    const muxFile = path.join(cfg.dir.content, argv.appstore.fn.out);
+    const sxList = argv.appstore.sxList;
+    const audioDub = argv.dub;
+    const addSubs = argv.mks && sxList.length > 0 ? true : false;
+    // set vars
+    let ftag = shlp.cleanupFilename((typeof argv.ftag != 'undefined' ? argv.ftag : argv.a).toString());
+    let setMainSubLang = argv.defsublang != 'none' ? argv.defsublang : false;
+    let isMuxed = false;
     // skip if no ts
-    if(!fs.existsSync(`${muxFile}.ts`) || fs.existsSync(`${muxFile}.ts`) && fs.statSync(`${muxFile}.ts`).size == 0){
+    if(!appMux.checkTSFile(`${muxFile}.ts`)){
         console.log('[INFO] TS file not found, skip muxing video...\n');
         return;
     }
-    // fix variables
-    let audioDub;
-    switch(true) {
-        case (audDubT != ''):
-            audioDub = audDubT;
-            break;
-        case (audDubE != ''):
-            audioDub = audDubE;
-            break;
-        case (audDubP != ''):
-            audioDub = audDubP;
-            break;
-        default:
-            audioDub = argv.dub;
-    }
-    const addSubs = argv.mks && sxList.length > 0 ? true : false;
-    // ftag
-    argv.ftag = typeof argv.ftag != 'undefined' ? argv.ftag : argv.a;
-    argv.ftag = shlp.cleanupFilename(argv.ftag.toString());
-    // usage
-    let usableMKVmerge = true;
-    let usableFFmpeg = true;
-    let setMainSubLang = argv.defsublang != 'none' ? argv.defsublang : false;
-    // check exec path
-    let mkvmergebinfile = await lookpath(path.join(cfg.bin.mkvmerge));
-    let ffmpegbinfile   = await lookpath(path.join(cfg.bin.ffmpeg));
-    // check exec
-    if( !argv.mp4 && !mkvmergebinfile ){
-        console.log('[WARN] MKVMerge not found, skip using this...');
-        usableMKVmerge = false;
-    }
-    if( !usableMKVmerge && !ffmpegbinfile || argv.mp4 && !ffmpegbinfile ){
-        console.log('[WARN] FFmpeg not found, skip using this...');
-        usableFFmpeg = false;
-    }
     // collect fonts info
-    let fontsList = [];
-    for(let s of sxList){
-        fontsList = fontsList.concat(s.fonts);
+    const fontList = appMux.makeFontsList(cfg.dir.fonts, fontsData, sxList);
+    // mergers
+    if(!argv.mp4 && !merger.MKVmerge){
+        console.log('[WARN] MKVMerge not found...');
     }
-    fontsList = [...new Set(fontsList)];
-    if(fontsList.length>0){
-        console.log(`\n[INFO] Required fonts (${fontsList.length}):`,fontsList.join(', '));
+    if(!merger.MKVmerge && !merger.FFmpeg || argv.mp4 && !merger.MKVmerge){
+        console.log('[WARN] FFmpeg not found...');
     }
-    // isMuxed
-    let isMuxed = false;
-    // mux
-    if(!argv.mp4 && usableMKVmerge){
-        // base
-        let mkvmux  = [];
-        // defaults
-        mkvmux.push('--output',`${muxFile}.mkv`);
-        mkvmux.push('--no-date','--disable-track-statistics-tags','--engage','no_variable_data');
-        // video
-        mkvmux.push('--track-name',`0:[${argv.ftag}]`);
-        mkvmux.push('--language',`1:${audioDub}`);
-        mkvmux.push('--video-tracks','0','--audio-tracks','1');
-        mkvmux.push('--no-subtitles','--no-attachments');
-        mkvmux.push(`${muxFile}.ts`);
-        // subtitles
-        if(addSubs){
-            for(let t of sxList){
-                let langArg = argv.bcp ? t.langTag : t.langCode;
-                let subsFile = path.join(cfg.dir.content, t.file);
-                let trackName = t.title == t.langName ? t.langStr : `${t.langStr} / ${t.title}`;
-                mkvmux.push('--track-name', `0:${trackName}`);
-                mkvmux.push('--language',`0:${langArg}`);
-                if(setMainSubLang && t.langExtCode == argv.defsublang) {
-                    console.log(`[INFO] Set default subtitle language to: ${t.langStr} / ${t.title}`);
-                    mkvmux.push('--default-track','0:yes');
-                    setMainSubLang = false;
-                }
-                mkvmux.push(`${subsFile}`);
-            }
-        }
-        if(addSubs && fontsList.length>0){
-            for(let f of fontsList){
-                let fontFile = fontsData.fonts[f];
-                if(fontFile){
-                    let fontLoc  = path.join(cfg.dir.fonts, fontFile);
-                    if(fs.existsSync(fontLoc) && fs.statSync(fontLoc).size != 0){
-                        mkvmux.push('--attachment-name',fontFile);
-                        mkvmux.push('--attach-file',fontLoc);
-                    }
-                }
-            }
-        }
-        fs.writeFileSync(`${muxFile}.json`,JSON.stringify(mkvmux,null,'  '));
+    // do mkvmerge
+    if(!argv.mp4 && merger.MKVmerge){
+        const mkvmux = await appMux.buildCommandMkvMerge(muxFile, sxList, fontList, {
+            audioDub, addSubs, ftag, setMainSubLang, useBCP: argv.bcp,
+        });
+        fs.writeFileSync(`${muxFile}.json`,JSON.stringify(mkvmux, null, '  '));
         try{
-            shlp.exec('mkvmerge',`"${mkvmergebinfile}"`,`@"${muxFile}.json"`);
+            shlp.exec('mkvmerge', `"${merger.MKVmerge}"`, `@"${muxFile}.json"`);
             isMuxed = true;
-        }catch(e){}
+        }
+        catch(e){
+            // okay..
+        }
     }
-    else if(usableFFmpeg){
-        let ffmux  = [], ffext = !argv.mp4 ? 'mkv' : 'mp4';
-        let ffsubs = addSubs ? true : false;
-        let ffmap = [], ffmeta = [];
-        ffmux.push('-i',`"${muxFile}.ts"`);
-        if(ffsubs){
-            let ti = 0;
-            for(let t of sxList){
-                let subsFile = path.join(cfg.dir.content, t.file);
-                let trackName = t.title == t.langName ? t.langStr : `${t.langStr} / ${t.title}`;
-                ffmux.push('-i',`"${subsFile}"`);
-                ffmap.push(`-map ${ti+1}`,'-c:s',(!argv.mp4?'copy':'mov_text'));
-                ffmeta.push(`-metadata:s:s:${ti}`,`language=${t.langCode}`);
-                ffmeta.push(`-metadata:s:s:${ti}`,`title="${trackName}"`);
-                ti++;
-            }
+    else if(merger.FFmpeg){
+        const outputFormat = !argv.mp4 ? 'mkv' : 'mp4';
+        const subsCodec = !argv.mp4 ? 'copy' : 'mov_text';
+        const ffmux = await appMux.buildCommandFFmpeg(muxFile, sxList, fontList, {
+            outputFormat, audioDub, addSubs, subsCodec, ftag, setMainSubLang,
+        });
+        try{ 
+            shlp.exec('ffmpeg',`"${merger.FFmpeg}"`, ffmux);
+            isMuxed = true;
         }
-        ffmux.push('-map 0:0 -c:v copy');
-        ffmux.push('-map 0:1 -c:a copy');
-        ffmux = ffmux.concat(ffmap);
-        if(ffsubs && ffext == 'mkv' && fontsList.length>0){
-            let attIndex = 0;
-            for(let f of fontsList){
-                let fontFile = fontsData.fonts[f];
-                if(fontFile){
-                    let fontLoc  = path.join(cfg.dir.fonts, fontFile);
-                    let fontMime = fontsData.fontMime(fontFile);
-                    if(fs.existsSync(fontLoc) && fs.statSync(fontLoc).size != 0){
-                        ffmux.push('-attach',`"${fontLoc}"`);
-                        ffmeta.push(`-metadata:s:t:${attIndex}`,`mimetype="${fontMime}"`);
-                        ffmeta.push(`-metadata:s:t:${attIndex}`,`filename="${fontFile}"`);
-                        attIndex++;
-                    }
-                }
-            }
+        catch(e){
+            // okay...
         }
-        ffmux.push('-metadata','encoding_tool="no_variable_data"');
-        ffmux.push('-metadata:s:v:0',`title="[${argv.ftag.replace(/"/g,'\'')}]"`);
-        ffmux.push('-metadata:s:a:0',`language=${audioDub}`);
-        ffmux = ffmux.concat(ffmeta);
-        ffmux.push(`"${muxFile}.${ffext}"`);
-        try{ shlp.exec('ffmpeg',`"${ffmpegbinfile}"`,ffmux.join(' ')); }catch(e){}
-        isMuxed = true;
-        setMainSubLang = false;
+        
     }
     else{
         console.log('\n[INFO] Done!\n');
         return;
     }
-    // chack paths if same
+    
+    doCleanUp(isMuxed, muxFile, addSubs, sxList);
+    
+}
+
+function doCleanUp(isMuxed, muxFile, addSubs, sxList){
+    // set output filename
+    const fnOut = argv.appstore.fn.out;
+    // check paths if same
     if(path.join(cfg.dir.trash) == path.join(cfg.dir.content)){
         argv.notrashfolder = true;
-        // argv.nocleanup = true;
     }
     if(argv.nocleanup && !fs.existsSync(cfg.dir.trash)){
         argv.notrashfolder = true;
@@ -1235,18 +1059,18 @@ async function muxStreams(){
         // don't move or delete temp files
     }
     else if(argv.nocleanup){
-        let toTrashTS = path.join(cfg.dir.trash,`${fnOutput}`);
         if(isMuxed){
+            const toTrashTS = path.join(cfg.dir.trash, `${fnOut}`);
             fs.renameSync(`${muxFile}.ts`, toTrashTS + '.ts');
             if(fs.existsSync(`${muxFile}.json`) && !argv.jsonmuxdebug){
                 fs.renameSync(`${muxFile}.json`, toTrashTS + '.json');
             }
-        }
-        if(addSubs){
-            for(let t of sxList){
-                let subsFile  = path.join(cfg.dir.content, t.file);
-                let subsTrash = path.join(cfg.dir.trash, t.file);
-                fs.renameSync(subsFile, subsTrash);
+            if(addSubs){
+                for(let t of sxList){
+                    let subsFile  = path.join(cfg.dir.content, t.file);
+                    let subsTrash = path.join(cfg.dir.trash, t.file);
+                    fs.renameSync(subsFile, subsTrash);
+                }
             }
         }
     }
@@ -1264,256 +1088,29 @@ async function muxStreams(){
     }
     // move to subfolder
     if(argv.folder && isMuxed){
-        const dubSuffix = audioDub != 'jpn' ? ` [${audioDub.toUpperCase().slice(0, -1)}DUB]` : '';
-        const titleFolder = shlp.cleanupFilename(fnTitle + dubSuffix);
+        const dubName = argv.dub.toUpperCase().slice(0, -1);
+        const dubSuffix = argv.dub != 'jpn' ? ` [${dubName}DUB]` : '';
+        const titleFolder = shlp.cleanupFilename(argv.appstore.fn.title + dubSuffix);
         const subFolder = path.join(cfg.dir.content, '/', titleFolder, '/');
         const vExt = '.' + ( !argv.mp4 ? 'mkv' : 'mp4' );
         if(!fs.existsSync(subFolder)){
             fs.mkdirSync(subFolder);
         }
-        fs.renameSync(muxFile + vExt, path.join(subFolder, fnOutput + vExt));
+        fs.renameSync(muxFile + vExt, path.join(subFolder, fnOut + vExt));
     }
     // done
     console.log('\n[INFO] Done!\n');
 }
 
 function fnOutputGen(){
+    if(typeof argv.appstore.fn != 'object'){
+        argv.appstore.fn = {};
+    }
     const fnPrepOutput = argv.filename.toString()
         .replace('{rel_group}', argv.a)
-        .replace('{title}', fnTitle)
-        .replace('{ep_num}', fnEpNum)
-        .replace('{ep_titl}', fnEpTitl)
-        .replace('{suffix}', fnSuffix);
+        .replace('{title}',     argv.appstore.fn.title)
+        .replace('{ep_num}',    argv.appstore.fn.epnum)
+        .replace('{ep_titl}',   argv.appstore.fn.epttl)
+        .replace('{suffix}',    argv.suffix.replace('SIZEp', argv.q));
     return shlp.cleanupFilename(fnPrepOutput);
-}
-
-// get url
-async function getData(durl, params){
-    params = params || {};
-    // options
-    let options = {
-        method: params.method ? params.method : 'GET',
-        headers: {
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64; rv:76.0) Gecko/20100101 Firefox/76.0',
-        },
-    };
-    // set binary
-    if(params.binary == true){
-        options.responseType = 'buffer';
-    }
-    // set headers
-    if(params.headers){
-        options.headers = params.headers;
-    }
-    if(params.followRedirect == false){
-        options.followRedirect = false;
-    }
-    // set additional headers
-    if(options.method == 'POST'){
-        options.headers['Content-Type'] = 'application/x-www-form-urlencoded';
-    }
-    // set body
-    if(params.body){
-        options.body = params.body;
-    }
-    // proxy
-    if(params.useProxy && argv.proxy && argv.curl){
-        try{
-            options.curlProxy =  buildProxy(argv.proxy);
-            options.curlProxyAuth = argv['proxy-auth'];
-        }
-        catch(e){
-            console.log(`[WARN] Not valid proxy URL${e.input?' ('+e.input+')':''}!`);
-            console.log('[WARN] Skiping...\n');
-            argv.proxy = false;
-        }
-    }
-    // check if cookie.txt exists
-    if(fs.existsSync(sessTxtFile)){
-        try{
-            const netcookie = fs.readFileSync(sessTxtFile, 'utf8');
-            fs.unlinkSync(sessTxtFile);
-            setNewCookie('', true, netcookie);
-        }
-        catch(e){
-            console.log('[ERROR] Cannot load cookies.txt file!');
-        }
-    }
-    // if auth
-    let cookie = [];
-    const loc = new URL(durl);
-    if(loc.origin == domain || loc.origin == apidomain || loc.origin.match(betaSite) || loc.origin.match(betaApi) ){
-        for(let uCookie of usefulCookies.auth){
-            if(checkCookieVal(session[uCookie])){
-                cookie.push(uCookie);
-            }
-        }
-        for(let uCookie of usefulCookies.sess){
-            if(checkSessId(session[uCookie]) && !argv.nosess){
-                cookie.push(uCookie);
-            }
-        }
-        if(!params.skipCookies){
-            cookie.push('c_locale');
-            options.headers.Cookie = shlp.cookie.make({
-                ...{ c_locale : { value: 'enUS' } },
-                ...session,
-            }, cookie);
-        }
-    }
-    if(loc.origin == domain){
-        options.minVersion = 'TLSv1.3';
-        options.maxVersion = 'TLSv1.3';
-        options.http2 = true;
-    }
-    // debug
-    options.hooks = {
-        beforeRequest: [
-            (options) => {
-                if(argv.debug){
-                    console.log('[DEBUG] GOT OPTIONS:');
-                    console.log(options);
-                }
-            }
-        ]
-    };
-    if(argv.debug){ 
-        options.curlDebug = true;
-    }
-    // do req
-    try {
-        let res;
-        if(argv.curl && loc.origin == domain){
-            const curlReq = require('./modules/module.curl-req');
-            res = await curlReq(durl.toString(), options, cfgFolder);
-        }
-        else{
-            res = await got(durl.toString(), options);
-        }
-        if(!params.skipCookies && res.headers['set-cookie']){
-            setNewCookie(res.headers['set-cookie'], false);
-            for(let uCookie of usefulCookies.sess){
-                if(session[uCookie] && argv.nosess){
-                    argv.nosess = false;
-                }
-            }
-        }
-        return {
-            ok: true,
-            res,
-        };
-    }
-    catch(error){
-        if(error.response && error.response.statusCode && error.response.statusMessage){
-            console.log(`[ERROR] ${error.name} ${error.response.statusCode}: ${error.response.statusMessage}`);
-        }
-        else{
-            console.log(`[ERROR] ${error.name}: ${error.code || error.message}`);
-        }
-        if(error.response && !error.res){
-            error.res = error.response;
-            const docTitle = error.res.body.match(/<title>(.*)<\/title>/);
-            if(error.res.body && docTitle){
-                console.log('[ERROR]', docTitle[1]);
-            }
-        }
-        return {
-            ok: false,
-            error,
-        };
-    }
-}
-function setNewCookie(setCookie, isAuth, fileData){
-    let cookieUpdated = [], lastExp = 0;
-    setCookie = fileData ? cookieFile(fileData) : shlp.cookie.parse(setCookie);
-    for(let uCookie of Object.keys(setCookie)){
-        if(setCookie[uCookie] && setCookie[uCookie].value && setCookie[uCookie].value == 'deleted'){
-            delete setCookie[uCookie];
-        }
-    }
-    for(let uCookie of usefulCookies.auth){
-        const cookieForceExp = 60*60*24*7;
-        const cookieExpCur = session[uCookie] ? session[uCookie] : { expires: 0 };
-        const cookieExp = new Date(cookieExpCur.expires).getTime() - cookieForceExp;
-        if(cookieExp > lastExp){
-            lastExp = cookieExp;
-        }
-    }
-    for(let uCookie of usefulCookies.auth){
-        if(!setCookie[uCookie]){
-            continue;
-        }
-        if(isAuth || setCookie[uCookie] && Date.now() > lastExp){
-            session[uCookie] = setCookie[uCookie];
-            cookieUpdated.push(uCookie);
-        }
-    }
-    for(let uCookie of usefulCookies.sess){
-        if(!setCookie[uCookie]){
-            continue;
-        }
-        if(
-            isAuth 
-            || argv.nosess && setCookie[uCookie]
-            || setCookie[uCookie] && !checkSessId(session[uCookie])
-        ){
-            const sessionExp = 60*60;
-            session[uCookie]            = setCookie[uCookie];
-            session[uCookie].expires    = new Date(Date.now() + sessionExp*1000);
-            session[uCookie]['Max-Age'] = sessionExp.toString();
-            cookieUpdated.push(uCookie);
-        }
-    }
-    if(cookieUpdated.length > 0){
-        session = yaml.stringify(session);
-        if(argv.debug){
-            console.log('[SAVE FILE]',`${sessCfgFile}.yml`);
-        }
-        fs.writeFileSync(`${sessCfgFile}.yml`, session);
-        session = yaml.parse(session);
-        console.log(`[INFO] Cookies were updated! (${cookieUpdated.join(', ')})\n`);
-    }
-}
-function checkCookieVal(chcookie){
-    return     chcookie
-            && chcookie.toString()   == '[object Object]'
-            && typeof chcookie.value == 'string'
-        ?  true : false;
-}
-function checkSessId(session_id){
-    return     session_id
-            && session_id.toString()     == '[object Object]'
-            && typeof session_id.expires == 'string'
-            && Date.now() < new Date(session_id.expires).getTime()
-            && typeof session_id.value   == 'string'
-        ?  true : false;
-}
-function buildProxy(proxyBaseUrl, proxyAuth){
-    if(!proxyBaseUrl.match(/^(https?|socks4|socks5):/)){
-        proxyBaseUrl = 'http://' + proxyBaseUrl;
-    }
-    
-    let proxyCfg = new URL(proxyBaseUrl);
-    let proxyStr = `${proxyCfg.protocol}//`;
-    
-    if(typeof proxyCfg.hostname != 'string' || proxyCfg.hostname == ''){
-        throw new Error('[ERROR] Hostname and port required for proxy!');
-    }
-    
-    if(proxyAuth && typeof proxyAuth == 'string' && proxyAuth.match(':')){
-        proxyCfg.username = proxyAuth.split(':')[0];
-        proxyCfg.password = proxyAuth.split(':')[1];
-        proxyStr += `${proxyCfg.username}:${proxyCfg.password}@`;
-    }
-    
-    proxyStr += proxyCfg.hostname;
-    
-    if(!proxyCfg.port && proxyCfg.protocol == 'http:'){
-        proxyStr += ':80';
-    }
-    else if(!proxyCfg.port && proxyCfg.protocol == 'https:'){
-        proxyStr += ':443';
-    }
-    
-    return proxyStr;
 }

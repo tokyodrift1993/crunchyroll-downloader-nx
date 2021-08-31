@@ -7,7 +7,7 @@ const modulesCleanup = require('removeNPMAbsolutePaths');
 const { exec } = require('pkg');
 
 const buildsDir = './_builds';
-const curNodeVer = 'node14-';
+const curNodeVer = 'node16-';
 
 // main
 (async function (){
@@ -49,14 +49,6 @@ async function doBuild(nodeVer){
         }
         process.exit(1);
     }
-    fs.mkdirSync(`${buildDir}/bin`);
-    fs.mkdirSync(`${buildDir}/config`);
-    fs.mkdirSync(`${buildDir}/fonts`);
-    fs.mkdirSync(`${buildDir}/videos`);
-    fs.mkdirSync(`${buildDir}/videos/_trash`);
-    fs.copySync('./config/bin-path.yml', `${buildDir}/config/bin-path.yml`);
-    fs.copySync('./config/cli-defaults.yml', `${buildDir}/config/cli-defaults.yml`);
-    fs.copySync('./config/dir-path.yml', `${buildDir}/config/dir-path.yml`);
     if(buildType == 'win64'){
         fs.copySync('./modules/cmd-here.bat', `${buildDir}/cmd-here.bat`);
     }

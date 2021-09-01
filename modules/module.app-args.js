@@ -160,8 +160,8 @@ class Args {
             defsublang: {
                 group: 'Muxing:',
                 describe: 'Set default subtitle by language tag',
-                choices: langsData.subtitleLanguagesLocales,
-                default: parseDefault('defSubLang', langsData.subtitleLanguagesLocales[0]),
+                choices: langsData.subtitleLanguagesFilter.slice(1),
+                default: parseDefault('defSubLang', langsData.subtitleLanguagesFilter.slice(1)[0]),
                 type: 'string',
             },
             'use-bcp-tags': {

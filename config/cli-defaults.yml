@@ -1,22 +1,31 @@
+# Downloading
+videoQuality: 720p
+nServer: 1
+kStream: 1
+tsparts: 10
+hsLang: none
+dlSubs: all
+
+# Muxing
+dubLanguage: jpn
+defSubLang: none
+useBCPtags: false
+mp4mux: false
+muxSubs: false
+
+# Filenaming
 filenameTemplate: "[{rel_group}] {title} - {ep_num} [{suffix}]"
 releaseGroup: CR
 epNumLength: 2
 fileSuffix: SIZEp
-videoQuality: 720p
-dubLanguage: jpn
-mp4mux: false
-muxSubs: false
-noCleanUp: false
-kStream: 1
-nServer: 1
-tsparts: 10
-oldStreams: false
-oldSubs: false
-hsLang: none
-dlSubs: all
-useBCPtags: false
-defSubLang: none
+
+# Proxy
+proxy: ''
+proxy_auth: ''
+proxy_ups: false
+use_curl: false
+
+# Utilities
 useFolder: false
-proxy: false
-proxy_auth: false
-proxy_ssp: false
+noCleanUp: false
+noTrashFolder: false

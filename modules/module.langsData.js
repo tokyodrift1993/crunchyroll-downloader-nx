@@ -41,16 +41,6 @@ const subtitleLanguagesFilter = (() => {
     return [...subtitleLanguagesExtraParameters, ...new Set(languages.map(l => { return l.locale; }).slice(0, -1))];
 })();
 
-// available subtitles on crunchyroll
-const subtitleLanguages = (() => {
-    return languages.map(l => { return l.cr_locale; }).slice(0, -1);
-})();
-
-// languages by locale codes
-const subtitleLanguagesLocales = (() => {
-    return [ ...new Set(languages.map(l => { return l.locale; }).slice(0, -1)) ];
-})();
-
 // convert
 const fixLanguageTag = (tag) => {
     tag = typeof tag == 'string' ? tag : 'und'; 
@@ -91,14 +81,11 @@ const parseRssSubtitlesString = (subs) => {
 
 // parse subtitles Array
 const parseSubtitlesArray = (tags) => {
-    return tags;
-    /*
     tags = sortSubtitles(tags.map((t) => {
-        return { locale: t };
+        return { locale: fixAndFindCrLC(t).locale };
     }));
-    tags = tags.map((t) => { return t.locale });;
+    tags = tags.map((t) => { return t.locale; });
     return tags.join(', ');
-    */
 };
 
 // sort subtitles
@@ -118,7 +105,7 @@ const sortSubtitles = (data, sortkey) => {
 };
 
 const sortTags = (data) => {
-    data = data.map(e => { return {locale: e};});
+    data = data.map(e => { return { locale: e }; });
     data = sortSubtitles(data);
     return data.map(e => e.locale);
 };
@@ -152,8 +139,6 @@ module.exports = {
     dubLanguages,
     dubRegExp,
     subtitleLanguagesFilter,
-    subtitleLanguages,
-    subtitleLanguagesLocales,
     fixLanguageTag,
     findLang,
     fixAndFindCrLC,

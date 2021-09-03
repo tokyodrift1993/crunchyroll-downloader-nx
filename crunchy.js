@@ -538,7 +538,7 @@ async function getSeasonById(){
     console.log();
     for(const m of selectedMedia){
         argv.dub = argv.appstore.audDubT;
-        getMedia(m);
+        await getMedia(m);
     }
     
 }

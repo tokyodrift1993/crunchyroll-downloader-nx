@@ -6,6 +6,7 @@
 /node_modules/
 /videos/*.json
 session.yml
+token.yml
 *.user.yml
 *.ttf
 *.otf

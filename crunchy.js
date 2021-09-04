@@ -70,9 +70,9 @@ const req = new reqModule.Req(domain, argv, sessCfgFile);
 // get cr fonts
 async function getFonts(){
     console.log('[INFO] Downloading fonts...');
-    for(let f of Object.keys(fontsData.fonts)){
-        let fontFile = fontsData.fonts[f];
-        let fontLoc  = path.join(cfg.dir.fonts, fontFile);
+    for(const f of Object.keys(fontsData.fonts)){
+        const fontFile = fontsData.fonts[f];
+        const fontLoc  = path.join(cfg.dir.fonts, fontFile);
         if(fs.existsSync(fontLoc) && fs.statSync(fontLoc).size != 0){
             console.log(`[INFO] ${f} (${fontFile}) already downloaded!`);
         }
@@ -85,8 +85,8 @@ async function getFonts(){
                 fs.ensureDirSync(fontFolder);
             }
             catch(e){}
-            let fontUrl = fontsData.root + fontFile;
-            let getFont = await req.getData(fontUrl, { useProxy: true, skipCookies: true, binary: true });
+            const fontUrl = fontsData.root + fontFile;
+            const getFont = await req.getData(fontUrl, { useProxy: true, skipCookies: true, binary: true });
             if(getFont.ok){
                 fs.writeFileSync(fontLoc, getFont.res.body);
                 console.log(`[INFO] Downloaded: ${f} (${fontFile})`);
@@ -437,11 +437,11 @@ async function getSeasonById(){
     console.log('[URL]', epListRss);
     
     const epNumList = { ep: [], sp: 0 };
-    const epNumLen = { E: 4, S: 3, M: 7 };
+    const epNumLen = epsFilter.epNumLen;
     const dateNow = Date.now() + 1;
     const endPubDateMax = 253368028800000;
     
-    const doEpsFilter = new epsFilter(epNumLen);
+    const doEpsFilter = new epsFilter.doFilter();
     const selEps = doEpsFilter.checkFilter(argv.e);
     const selectedMedia = [];
     
@@ -545,33 +545,8 @@ async function getSeasonById(){
 
 async function getMediaById(){
     // default
-    let e = argv.e.split(','), inpMedia = [''];
-    // map select
-    e.map((e) => {
-        if(e.match('-') && e.split('-').length == 2){
-            let eRange = e.split('-');
-            if(eRange[0].match(/^m\d{1,8}$/i) && eRange[1].match(/^\d{1,8}$/)){
-                eRange[0] = eRange[0].replace(/^m/i,'');
-                eRange[0] = parseInt(eRange[0]);
-                eRange[1] = parseInt(eRange[1]);
-                if (eRange[0] > eRange[1]) {
-                    inpMedia.push(eRange[0]);
-                }
-                else{
-                    let rangeLength = eRange[1] - eRange[0] + 1;
-                    let epsRangeArr = Array(rangeLength).fill(0).map((x, y) => x + y + eRange[0]);
-                    epsRangeArr.forEach((i)=>{
-                        let selEpStr = i.toString();
-                        inpMedia.push(selEpStr);
-                    });
-                }
-            }
-        }
-        else if(e.match(/^m\d{1,8}$/i)){
-            inpMedia.push(parseInt(e.replace(/^m/i,'')));
-        }
-    });
-    inpMedia = [...new Set(inpMedia)].splice(1);
+    const doEpsFilter = new epsFilter.doFilter();
+    const inpMedia = doEpsFilter.checkMediaFilter(argv.e);
     if(inpMedia.length > 0){
         console.log('[INFO] Selected media:', inpMedia.join(', '), '\n');
         for(let id of inpMedia){

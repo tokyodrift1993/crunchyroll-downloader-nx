@@ -12,7 +12,7 @@ yargs.parserConfiguration({
 });
 
 class Args {
-    constructor(cfg, langsData){
+    constructor(cfg, langsData, is_beta){
         // parse default
         const parseDefault = (key, _default) => {
             if (Object.prototype.hasOwnProperty.call(cfg, key)) {
@@ -55,13 +55,13 @@ class Args {
             search: {
                 alias: 'f',
                 group: 'Search:',
-                describe: 'Search show ids',
+                describe: 'Search season ids',
                 type: 'string',
             },
             search2: {
                 alias: 'g',
                 group: 'Search:',
-                describe: 'Search show ids (multi-language, experimental)',
+                describe: 'Search season ids (multi-language, experimental)',
                 type: 'string',
             },
             page: {
@@ -71,83 +71,138 @@ class Args {
                 type: 'number',
             },
         };
+        // beta
+        if(is_beta){
+            delete searchArgs.search2;
+            Object.assign(
+                searchArgs,
+                {
+                    'search-type': {
+                        group: 'Search:',
+                        describe: 'Search type',
+                        choices: [ '', 'top_results', 'series', 'movie_listing', 'episode' ],
+                        default: '',
+                        type: 'string',
+                    },
+                    'search-locale': {
+                        group: 'Search:',
+                        describe: 'Search language',
+                        choices: langsData.searchLocales,
+                        default: '',
+                        type: 'string',
+                    },
+                },
+            );
+        }
         // series
-        const seriesArgs = {
-            season: {
-                alias: 's',
-                group: 'Downloading:',
-                describe: 'Sets the Season ID',
-                type: 'number'
+        const seriesArgs = {};
+        // beta
+        if(is_beta){
+            Object.assign(
+                seriesArgs,
+                {
+                    'new': {
+                        group: 'Downloading:',
+                        describe: 'Get last updated series list',
+                        type: 'boolean',
+                    },
+                    'movie-listing': {
+                        alias: 'flm',
+                        group: 'Downloading:',
+                        describe: 'Get video list by Movie Listing ID',
+                        type: 'string',
+                    },
+                    'series': {
+                        alias: 'srz',
+                        group: 'Downloading:',
+                        describe: 'Get season list by Series ID',
+                        type: 'string',
+                    },
+                },
+            );
+        }
+        Object.assign(
+            seriesArgs,
+            {
+                season: {
+                    alias: 's',
+                    group: 'Downloading:',
+                    describe: 'Sets the Season ID',
+                    type: 'number'
+                },
+                episode: {
+                    alias: 'e',
+                    group: 'Downloading:',
+                    describe: 'Sets the Episode Number/IDs (comma-separated, hyphen-sequence)',
+                    type: 'string',
+                },
+                quality: {
+                    alias: 'q',
+                    group: 'Downloading:',
+                    describe: 'Sets video quality',
+                    choices: ['240p', '360p', '480p', '720p', '1080p', 'max'],
+                    default: parseDefault('videoQuality', '720p'),
+                    type: 'string',
+                },
+                server: {
+                    alias: 'x',
+                    group: 'Downloading:',
+                    describe: 'Select server',
+                    choices: [1, 2, 3, 4],
+                    default: parseDefault('nServer', 1),
+                    type: 'number',
+                },
+                kstream: {
+                    alias: 'k',
+                    group: 'Downloading:',
+                    describe: 'Select specific stream',
+                    choices: [1, 2, 3, 4, 5, 6, 7],
+                    default: parseDefault('kStream', 1),
+                    type: 'number',
+                },
+                tsparts: {
+                    group: 'Downloading:',
+                    describe: 'Download ts parts in batch',
+                    choices: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30],
+                    default: parseDefault('tsparts', 10),
+                    type: 'number',
+                },
+                hslang: {
+                    group: 'Downloading:',
+                    describe: 'Download video with specific hardsubs',
+                    choices: langsData.subtitleLanguagesFilter.slice(1),
+                    default: parseDefault('hsLang', 'none'),
+                    type: 'string',
+                },
+                dlsubs: {
+                    group: 'Downloading:',
+                    describe: 'Download subtitles by language tag (space-separated)',
+                    choices: langsData.subtitleLanguagesFilter,
+                    default: parseDefault('dlSubs', 'all'),
+                    type: 'array',
+                },
+                skipdl: {
+                    alias: 'novids',
+                    group: 'Downloading:',
+                    describe: 'Skip downloading video',
+                    type: 'boolean',
+                },
+                skipsubs: {
+                    group: 'Downloading:',
+                    describe: 'Skip downloading subtitles',
+                    type: 'boolean',
+                },
+                'show-stream-url': {
+                    alias: 'ssu',
+                    group: 'Downloading:',
+                    describe: 'Show full stream url',
+                    type: 'boolean',
+                },
             },
-            episode: {
-                alias: 'e',
-                group: 'Downloading:',
-                describe: 'Sets the Episode Number/IDs (comma-separated, hyphen-sequence)',
-                type: 'string',
-            },
-            quality: {
-                alias: 'q',
-                group: 'Downloading:',
-                describe: 'Sets video quality',
-                choices: ['240p', '360p', '480p', '720p', '1080p', 'max'],
-                default: parseDefault('videoQuality', '720p'),
-                type: 'string',
-            },
-            server: {
-                alias: 'x',
-                group: 'Downloading:',
-                describe: 'Select server',
-                choices: [1, 2, 3, 4],
-                default: parseDefault('nServer', 1),
-                type: 'number',
-            },
-            kstream: {
-                alias: 'k',
-                group: 'Downloading:',
-                describe: 'Select specific stream',
-                choices: [1, 2, 3, 4, 5, 6, 7],
-                default: parseDefault('kStream', 1),
-                type: 'number',
-            },
-            tsparts: {
-                group: 'Downloading:',
-                describe: 'Download ts parts in batch',
-                choices: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30],
-                default: parseDefault('tsparts', 10),
-                type: 'number',
-            },
-            hslang: {
-                group: 'Downloading:',
-                describe: 'Download video with specific hardsubs',
-                choices: langsData.subtitleLanguagesFilter.slice(1),
-                default: parseDefault('hsLang', 'none'),
-                type: 'string',
-            },
-            dlsubs: {
-                group: 'Downloading:',
-                describe: 'Download subtitles by language tag (space-separated)',
-                choices: langsData.subtitleLanguagesFilter,
-                default: parseDefault('dlSubs', 'all'),
-                type: 'array',
-            },
-            skipdl: {
-                alias: 'novids',
-                group: 'Downloading:',
-                describe: 'Skip downloading video',
-                type: 'boolean',
-            },
-            skipsubs: {
-                group: 'Downloading:',
-                describe: 'Skip downloading subtitles',
-                type: 'boolean',
-            },
-            'show-stream-url': {
-                alias: 'ssu',
-                group: 'Downloading:',
-                describe: 'Show full stream url',
-                type: 'boolean',
-            },
-        };
+        );
+        if(is_beta){
+            seriesArgs.season.type = 'string';
+        }
         // muxing
         const muxingArgs = {
             dub: {

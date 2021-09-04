@@ -103,8 +103,29 @@ const saveCRSession = (sessCfgFile, data) => {
     }
 };
 
+const loadCRToken = (tokenCfgFile) => {
+    let token = loadYamlCfgFile(tokenCfgFile, true);
+    if(typeof token !== 'object' || token === null || Array.isArray(token)){
+        token = {};
+    }
+    return token;
+};
+
+const saveCRToken = (tokenCfgFile, data) => {
+    const cfgFolder = path.dirname(tokenCfgFile);
+    try{
+        fs.ensureDirSync(cfgFolder);
+        fs.writeFileSync(`${tokenCfgFile}.yml`, yaml.stringify(data));
+    }
+    catch(e){
+        console.log('[ERROR] Can\'t save token file to disk!');
+    }
+};
+
 module.exports = {
     loadCfg,
     loadCRSession,
     saveCRSession,
+    loadCRToken,
+    saveCRToken,
 };

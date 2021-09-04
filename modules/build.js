@@ -39,11 +39,18 @@ async function doBuild(nodeVer){
         '--target', nodeVer + getTarget(buildType),
         '--output', `${buildDir}/${pkg.short_name}`,
     ];
+    const buildConfigBeta = [ 
+        `${pkg.short_name}-beta.js`, 
+        '--target', nodeVer + getTarget(buildType),
+        '--output', `${buildDir}/${pkg.short_name}-beta`,
+    ];
     console.log(`[Build] Build configuration: ${buildFull}`);
     try {
         await exec(buildConfig);
+        await exec(buildConfigBeta);
     }
     catch(e){
+        console.log(e);
         if(nodeVer == ''){
             await doBuild(curNodeVer);
         }

@@ -41,6 +41,10 @@ const subtitleLanguagesFilter = (() => {
     return [...subtitleLanguagesExtraParameters, ...new Set(languages.map(l => { return l.locale; }).slice(0, -1))];
 })();
 
+const searchLocales = (() => {
+    return ['', ...new Set(languages.map(l => { return l.cr_locale; }).slice(0, -1))];
+})();
+
 // convert
 const fixLanguageTag = (tag) => {
     tag = typeof tag == 'string' ? tag : 'und'; 
@@ -139,6 +143,7 @@ module.exports = {
     dubLanguages,
     dubRegExp,
     subtitleLanguagesFilter,
+    searchLocales,
     fixLanguageTag,
     findLang,
     fixAndFindCrLC,

@@ -73,7 +73,7 @@ const buildCommandMkvMerge = (video, subtitles, fonts, options) => {
             const langArg = options.useBCP ? t.language.locale : t.language.code;
             mkvmux.push('--track-name', `0:${t.title}`);
             mkvmux.push('--language', `0:${langArg}`);
-            if(options.setMainSubLang && t.locale == options.setMainSubLang) {
+            if(options.setMainSubLang && t.language.locale == options.setMainSubLang) {
                 console.log(`[INFO] Set default subtitle language to: ${t.title}`);
                 mkvmux.push('--default-track', '0:yes');
                 options.setMainSubLang = false;

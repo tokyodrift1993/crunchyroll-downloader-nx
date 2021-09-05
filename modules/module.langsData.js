@@ -1,28 +1,27 @@
 // available langs
 
 const languages = [
-    { cr_locale: 'en-US',  locale: 'en',     code: 'eng', },
-    { cr_locale: 'es-LA',  locale: 'es-419', code: 'spa', },
-    { cr_locale: 'es-419', locale: 'es-419', code: 'spa', },
-    { cr_locale: 'es-ES',  locale: 'es',     code: 'spa', },
-    { cr_locale: 'pt-BR',  locale: 'pt-BR',  code: 'por', },
-    { cr_locale: 'fr-FR',  locale: 'fr',     code: 'fra', },
-    { cr_locale: 'de-DE',  locale: 'de',     code: 'deu', },
-    { cr_locale: 'ar-ME',  locale: 'ar',     code: 'ara', },
-    { cr_locale: 'ar-SA',  locale: 'ar',     code: 'ara', },
-    { cr_locale: 'it-IT',  locale: 'it',     code: 'ita', },
-    { cr_locale: 'ru-RU',  locale: 'ru',     code: 'rus', },
-    { cr_locale: 'tr-TR',  locale: 'tr',     code: 'tur', },
-    { cr_locale: 'ja-JP',  locale: 'ja',     code: 'jpn', },
+    { cr_locale: 'en-US',  locale: 'en',     code: 'eng', name: 'English'                                        },
+    { cr_locale: 'es-LA',  locale: 'es-419', code: 'spa', name: 'Spanish',    language: 'Latin American Spanish' },
+    { cr_locale: 'es-419', locale: 'es-419', code: 'spa', name: 'Spanish',    language: 'Latin American Spanish' },
+    { cr_locale: 'es-ES',  locale: 'es',     code: 'spa', name: 'Spanish'                                        },
+    { cr_locale: 'pt-BR',  locale: 'pt-BR',  code: 'por', name: 'Portuguese', language: 'Brazilian Portuguese'   },
+    { cr_locale: 'fr-FR',  locale: 'fr',     code: 'fra', name: 'French'                                         },
+    { cr_locale: 'de-DE',  locale: 'de',     code: 'deu', name: 'German'                                         },
+    { cr_locale: 'ar-ME',  locale: 'ar',     code: 'ara', name: 'Arabic'                                         },
+    { cr_locale: 'ar-SA',  locale: 'ar',     code: 'ara', name: 'Arabic'                                         },
+    { cr_locale: 'it-IT',  locale: 'it',     code: 'ita', name: 'Italian'                                        },
+    { cr_locale: 'ru-RU',  locale: 'ru',     code: 'rus', name: 'Russian'                                        },
+    { cr_locale: 'tr-TR',  locale: 'tr',     code: 'tur', name: 'Turkish'                                        },
+    { cr_locale: 'ja-JP',  locale: 'ja',     code: 'jpn', name: 'Japanese'                                       },
 ];
 
 // add en language names
 (() =>{
-    const getLanguageName = new Intl.DisplayNames(['en'], {type: 'language'});
     for(let languageIndex in languages){
-        // console.log(languages, languageIndex);
-        languages[languageIndex].name     = getLanguageName.of(languages[languageIndex].code);
-        languages[languageIndex].language = getLanguageName.of(languages[languageIndex].locale);
+        if(!languages[languageIndex].language){
+            languages[languageIndex].language = languages[languageIndex].name;
+        }
     }
 })();
 

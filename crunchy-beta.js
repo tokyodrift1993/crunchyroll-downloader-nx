@@ -24,7 +24,7 @@ const appMux      = require('./modules/module.muxing');
 // app private dev patches
 const appPatch = fs.existsSync('./modules/patch.js')
     ? require('./modules/patch')
-    : {};
+    : { active: false };
 
 // new-cfg paths
 const workingDir   = process.pkg ? path.dirname(process.execPath) : __dirname;
@@ -801,7 +801,7 @@ async function getMedia(mMeta){
         return;
     }
     
-    if(appPatch){
+    if(appPatch.active){
         mMeta = appPatch.doMod1(mMeta, argv);
     }
     

@@ -4,6 +4,7 @@
 /_builds/*
 /node_modules/
 /videos/*.json
+patch.js
 session.yml
 token.yml
 *.user.yml

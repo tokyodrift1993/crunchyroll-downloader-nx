@@ -84,16 +84,22 @@ class Args {
                         default: '',
                         type: 'string',
                     },
-                    'search-locale': {
-                        group: 'Search:',
-                        describe: 'Search language',
-                        choices: langsData.searchLocales,
-                        default: '',
-                        type: 'string',
-                    },
                 },
             );
         }
+        // search locale
+        Object.assign(
+            searchArgs,
+            {
+                'search-locale': {
+                    group: 'Search:',
+                    describe: 'Search  locale',
+                    choices: langsData.searchLocales,
+                    default: '',
+                    type: 'string',
+                },
+            },
+        );
         // series
         const seriesArgs = {};
         // beta
@@ -116,6 +122,20 @@ class Args {
                         alias: 'srz',
                         group: 'Downloading:',
                         describe: 'Get season list by Series ID',
+                        type: 'string',
+                    },
+                },
+            );
+        }
+        else{
+            Object.assign(
+                seriesArgs,
+                {
+                    'page-locale': {
+                        group: 'Downloading:',
+                        describe: 'Season request locale',
+                        choices: langsData.searchLocales,
+                        default: '',
                         type: 'string',
                     },
                 },

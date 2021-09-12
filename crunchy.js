@@ -242,6 +242,7 @@ async function optOutBeta(){
 // search 1
 async function doSearch(){
     // search params
+    argv['search-locale'] = argv['search-locale'].replace(/-/, '');
     const params = new URLSearchParams({
         q: argv.search,
         clases: 'series',
@@ -249,7 +250,7 @@ async function doSearch(){
         fields: 'series.series_id,series.name,series.year',
         offset: argv.p ? ( parseInt(argv.p) - 1 ) * 100 : 0,
         limit: 100,
-        locale: 'enUS',
+        locale: argv['search-locale'] ? argv['search-locale'] : 'enUS',
     });
     // session
     if(
@@ -295,13 +296,14 @@ async function doSearch(){
 
 async function printSeasons(a, apiSession){
     console.log(`[SERIES] #${a.series_id} ${a.name}`,(a.year?`(${a.year})`:''));
+    // collection params
     const collParams = new URLSearchParams({
         session_id: apiSession,
         series_id:  a.series_id,
         fields:     'collection.collection_id,collection.name',
         limit:      5000,
         offset:     0,
-        locale:     'enUS',
+        locale:     argv['search-locale'] ? argv['search-locale'] : 'enUS',
     });
     const seasonListReq = await req.getData(`${api.collections}?${collParams.toString()}`,{useProxy:true});
     if(seasonListReq.ok){
@@ -327,11 +329,13 @@ async function printSeasons(a, apiSession){
 
 async function doSearch2(){
     // search params
+    argv['search-locale'] = argv['search-locale'].replace(/-/, '');
     const params = new URLSearchParams({
         q: argv.search2,
         sp: argv.p ? parseInt(argv.p) - 1 : 0,
         limit: 100,
-        st: 'm'
+        st: 'm',
+        locale: argv['search-locale'] ? argv['search-locale'] : 'enUS',
     });
     // request
     const reqAniSearch  = await req.getData(`${api.search2}?${params.toString()}`, { useProxy: true });
@@ -357,9 +361,14 @@ async function doSearch2(){
     }
     
     for(const item of resultItems){
-        const itemHref = $(item).find('a').attr('href');
+        const itemHref = '/' + $(item).find('a').attr('href').split('/').map(e => {
+            if(e.match(/^\w{2}(-\w{2})?$/)){
+                return '';
+            }
+            return e;
+        }).slice(1).join('/').replace(/^\//, '');
         const itemData = aniRefListSec.data.filter(value => value.link == itemHref).shift();
-        const isNotLib = itemHref.match(/^\/library\//) ? false : true;
+        const isNotLib = itemHref.match(/\/library\//) ? false : true;
         if(isNotLib && itemData && itemData.type == 'Series'){
             if(req.session.session_id && req.checkSessId(req.session.session_id) && !argv.nosess){
                 await printSeasons({ series_id: itemData.id, name: itemData.name }, req.session.session_id.value);
@@ -370,7 +379,7 @@ async function doSearch2(){
             totalResults++;
         }
         if(isNotLib && !itemData){
-            console.log('[SERIES] #??????', itemHref.replace(/^\//,'').replace(/-/g,' '));
+            console.log('[SERIES] #??????', itemHref.replace(/^\//, '').replace(/-/g, ' '));
             console.log('  [ERROR] Can\'t fetch seasons list, not listed in search data');
             console.log(`  [ERROR] URL: ${domain.www}${itemHref}`);
             totalResults++;
@@ -568,7 +577,17 @@ async function getMedia(mMeta){
     
     console.log(`[INFO] Requesting: [${mMeta.mediaId}] ${mediaName}\n`);
     
-    const epUrl = `${api.media_page}${mMeta.mediaId}?skip_wall=1`;
+    argv['page-locale'] = argv['page-locale'].replace(/-/, '');
+    
+    const pageQs = new URLSearchParams({
+        skip_wall: 1,
+    });
+    
+    if(argv['page-locale'] != ''){
+        pageQs.set('locale', argv['page-locale']);
+    }
+    
+    const epUrl = `${api.media_page}${mMeta.mediaId}?${pageQs.toString()}`;
     const mediaPage = await req.getData(epUrl, { useProxy: true });
     if(!mediaPage.ok){
         console.log('[ERROR] Failed to get video page!');
@@ -587,6 +606,8 @@ async function getMedia(mMeta){
         let msgItemsArr = [];
         console.log('[INFO] PAGE MSGs:');
         for(let m of msgItems){
+            m.type = typeof m.type == 'string' ? m.type : 'MSG';
+            m.message_body = typeof m.message_body == 'string' ? m.message_body : 'Empty message';
             msgItemsArr.push(`  [${m.type}] ${m.message_body.replace(/<[^>]*>?/gm, '')}`);
         }
         msgItemsArr = [...new Set(msgItemsArr)];

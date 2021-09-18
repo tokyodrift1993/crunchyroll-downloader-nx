@@ -81,7 +81,7 @@ const req = new reqModule.Req(domain, argv, true);
         await getObjectById();
     }
     else{
-        // appYargs.showHelp();
+        appYargs.showHelp();
     }
 })();
 
@@ -689,6 +689,11 @@ async function getSeasonById(){
         return;
     }
     
+    if(selectedMedia.length > 1){
+        argv.appstore.isBatch = true;
+    }
+    
+    console.log();
     for(let media of selectedMedia){
         await getMedia(media);
     }
@@ -772,6 +777,10 @@ async function getObjectById(returnData){
             item.isSelected = true;
         }
         await parseObject(item, 2);
+    }
+    
+    if(selectedMedia.length > 1){
+        argv.appstore.isBatch = true;
     }
     
     console.log();

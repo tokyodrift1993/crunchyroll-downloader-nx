@@ -20,7 +20,7 @@ const usefulCookies = {
 
 // req
 const Req = class {
-    constructor(domain, argv, sessCfg, is_beta){
+    constructor(domain, argv, is_beta){
         // settings and cookies
         this.is_beta = Boolean(is_beta);
         this.loadSessTxt = this.is_beta ? false : true;
@@ -28,9 +28,10 @@ const Req = class {
         this.domain  = domain;
         this.argv    = argv;
         // session cfg
-        this.sessCfg = sessCfg,
-        this.session = this.is_beta ? {} : yamlCfg.loadCRSession(sessCfg);
-        this.cfgDir  = path.dirname(sessCfg);
+        this.sessCfg = yamlCfg.sessCfgFile,
+        this.session = this.is_beta ? {} : yamlCfg.loadCRSession();
+        this.cfgDir  = yamlCfg.cfgFolder;
+        this.curl = false;
     }
     async getData (durl, params) {
         params = params || {};
@@ -38,7 +39,7 @@ const Req = class {
         let options = {
             method: params.method ? params.method : 'GET',
             headers: {
-                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64; rv:76.0) Gecko/20100101 Firefox/76.0',
+                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64; rv:90.0) Gecko/20100101 Firefox/90.0',
             },
         };
         // additional params
@@ -130,13 +131,13 @@ const Req = class {
         // try do request
         try {
             let res;
-            if(this.argv.curl &&  Object.values(this.domain).includes(loc.origin)){
-                res = await curlReq(durl.toString(), options, this.cfgDir);
+            if(this.curl && this.argv.curl &&  Object.values(this.domain).includes(loc.origin)){
+                res = await curlReq(this.curl, durl.toString(), options, this.cfgDir);
             }
             else{
                 res = await got(durl.toString(), options);
             }
-            if(!params.skipCookies && res.headers['set-cookie']){
+            if(!this.is_beta && !params.skipCookies && res && res.headers && res.headers['set-cookie']){
                 this.setNewCookie(res.headers['set-cookie'], false);
                 for(let uCookie of usefulCookies.sess){
                     if(this.session[uCookie] && this.argv.nosess){
@@ -163,7 +164,8 @@ const Req = class {
                     console.log('[ERROR]', docTitle[1]);
                 }
             }
-            if(error.res && error.res.body && error.response.statusCode && error.response.statusCode != 404){
+            if(error.res && error.res.body && error.response.statusCode 
+                && error.response.statusCode != 404 && error.response.statusCode != 403){
                 console.log('[ERROR] Body:', error.res.body);
             }
             return {
@@ -217,7 +219,7 @@ const Req = class {
             if(this.argv.debug){
                 console.log('[SAVING FILE]',`${this.sessCfg}.yml`);
             }
-            yamlCfg.saveCRSession(this.sessCfg, this.session);
+            yamlCfg.saveCRSession(this.session);
             console.log(`[INFO] Cookies were updated! (${cookieUpdated.join(', ')})\n`);
         }
     }

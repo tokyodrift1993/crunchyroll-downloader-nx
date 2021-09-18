@@ -22,27 +22,27 @@ const yargs       = require('./modules/module.app-args');
 const epsFilter   = require('./modules/module.eps-filter');
 const appMux      = require('./modules/module.muxing');
 
-// new-cfg paths
-const workingDir  = process.pkg ? path.dirname(process.execPath) : __dirname;
-const cfgFolder   = path.join(workingDir, '/config');
-const binCfgFile  = path.join(cfgFolder, 'bin-path');
-const dirCfgFile  = path.join(cfgFolder, 'dir-path');
-const cliCfgFile  = path.join(cfgFolder, 'cli-defaults');
-const sessCfgFile = path.join(cfgFolder, 'session');
-const cfg         = yamlCfg.loadCfg(workingDir, binCfgFile, dirCfgFile, cliCfgFile);
+// new-cfg
+const cfg = yamlCfg.loadCfg();
 
 // args
 const appYargs = new yargs(cfg.cli, langsData);
 const argv = appYargs.appArgv();
 argv.appstore = {};
 
-// load req
+// api and req
 const { domain, api } = require('./modules/module.api-urls');
 const reqModule = require('./modules/module.req');
-const req = new reqModule.Req(domain, argv, sessCfgFile);
+const req = new reqModule.Req(domain, argv);
 
 // main
 (async () => {
+    // load binaries
+    cfg.bin = await yamlCfg.loadBinCfg();
+    req.curl = cfg.bin.curl;
+    if(argv.curl && !req.curl){
+        argv.curl = false;
+    }
     // select mode
     if(argv.auth){
         await doAuth();
@@ -50,16 +50,19 @@ const req = new reqModule.Req(domain, argv, sessCfgFile);
     else if(argv.dlfonts){
         await getFonts();
     }
+    else if(argv.new){
+        await getNewlyAdded();
+    }
     else if(argv.search && argv.search.length > 2){
         await doSearch();
     }
     else if(argv.search2 && argv.search2.length > 2){
         await doSearch2();
     }
-    else if(argv.s && parseInt(argv.s, 10) > 0){
+    else if(argv.season && parseInt(argv.season, 10) > 0){
         await getSeasonById();
     }
-    else if(argv.e){
+    else if(argv.episode){
         await getMediaById();
     }
     else{
@@ -239,6 +242,112 @@ async function optOutBeta(){
     }
 }
 
+async function getNewlyAdded(){
+    const videoRss = `${api.newani}`;
+    const videoRssReq = await req.getData(videoRss, { useProxy: true });
+    if(!videoRssReq.ok){ return; }
+    
+    const videoRssBody = videoRssReq.res.body;
+    const $ = cheerio.load(videoRssBody, {
+        normalizeWhitespace: true,
+        xmlMode: true
+    });
+    
+    const videoCount = $('item').length;
+    
+    const dateNow = Date.now() + 1;
+    const endPubDateMax = 253368028800000;
+    
+    console.log('[INFO] Newly added:');
+    
+    for(let idx in Array(videoCount).fill()){
+        const curItem = $('item').eq(idx);
+        const mediaId = curItem.find('crunchyroll\\:mediaId').text();
+        const titleData = curItem.find('title').text().split(' - ');
+        const episodeNum = curItem.find('crunchyroll\\:episodeNumber').text();
+        const episodeTitle = curItem.find('crunchyroll\\:episodeTitle').text();
+        
+        // calc dates
+        const epPubDate = {
+            prem: new Date(curItem.find('crunchyroll\\:premiumPubDate').text()),
+            free: new Date(curItem.find('crunchyroll\\:freePubDate').text()),
+            end: new Date(curItem.find('crunchyroll\\:endPubDate').text()),
+        };
+        epPubDate.premLeft = dateNow < epPubDate.prem ? epPubDate.prem - dateNow : 0;
+        epPubDate.freeLeft = dateNow < epPubDate.free ? epPubDate.free - dateNow : 0;
+        epPubDate.endLeft  = dateNow < epPubDate.end  ? epPubDate.end  - dateNow : 0;
+        if(epPubDate.end.getTime() == endPubDateMax){
+            epPubDate.endLeft = -1;
+        }
+        
+        const premStar = epPubDate.premLeft == 0 && epPubDate.freeLeft > 0 ? '☆ ' : '';
+        const rssSubsStr = curItem.find('crunchyroll\\:subtitleLanguages').text();
+        
+        console.log(`  [M:${mediaId}] ${premStar}${titleData[0]} / ${episodeNum} - ${episodeTitle}`);
+        
+        if(epPubDate.premLeft > 0){
+            console.log(`   - PremPubDate: ${shlp.dateString(epPubDate.prem)} (in ${shlp.formatTime((epPubDate.premLeft)/1000)})`);
+        }
+        if(epPubDate.freeLeft > 0){
+            console.log(`   - FreePubDate: ${shlp.dateString(epPubDate.free)} (in ${shlp.formatTime((epPubDate.freeLeft)/1000)})`);
+        }
+        if(epPubDate.premLeft == 0 && epPubDate.freeLeft == 0){
+            console.log(`   - PubDate: ${shlp.dateString(epPubDate.prem)}`);
+        }
+        
+        if(rssSubsStr != ''){
+            console.log('   - Subtitles:', langsData.parseRssSubtitlesString(rssSubsStr));
+        }
+        
+    }
+    /*
+    <title>
+I'm Standing on a Million Lives (Portuguese Dub) - Episode 16 - The Island That Flows
+</title>
+<link>
+http://www.crunchyroll.com/ru/im-standing-on-a-million-lives/episode-16-the-island-that-flows-818271
+</link>
+<guid isPermalink="true">http://www.crunchyroll.com/media-818271</guid>
+<description>
+<img src="https://img1.ak.crunchyroll.com/i/spire2-tmb/20f483f100becef8a5f61615807f3f8c1627629153_thumb.jpg" /><br />The islanders have sent the women and children away on a boat to protect them from the upcoming battle, but the orcs find and target them. Shindou and Cantil move to stop them, but in the midst of the fight, the earth begins to shake violently as the volcano on the island erupts. Pandemonium breaks loose as volcanic bombs rain down on the island... but this is only the prologue to a much greater disaster.
+</description>
+<enclosure url="https://img1.ak.crunchyroll.com/i/spire2-tmb/20f483f100becef8a5f61615807f3f8c1627629153_thumb.jpg" type="image/jpeg" length="8733"/>
+<category>Anime</category>
+<media:category scheme="http://gdata.youtube.com/schemas/2007/categories.cat" label="Anime">Movies_Anime_animation</media:category>
+<crunchyroll:mediaId>818271</crunchyroll:mediaId>
+<pubDate>Fri, 17 Sep 2021 11:00:00 GMT</pubDate>
+<crunchyroll:freePubDate>Tue, 19 Jan 2038 00:27:28 GMT</crunchyroll:freePubDate>
+<crunchyroll:premiumPubDate>Fri, 17 Sep 2021 11:00:00 GMT</crunchyroll:premiumPubDate>
+<crunchyroll:endPubDate>Mon, 30 Nov 9998 08:00:00 GMT</crunchyroll:endPubDate>
+<crunchyroll:premiumEndPubDate>Mon, 30 Nov 9998 08:00:00 GMT</crunchyroll:premiumEndPubDate>
+<crunchyroll:freeEndPubDate>Mon, 30 Nov 9998 08:00:00 GMT</crunchyroll:freeEndPubDate>
+<crunchyroll:seriesTitle>I'm Standing on a Million Lives</crunchyroll:seriesTitle>
+<crunchyroll:episodeTitle>The Island That Flows</crunchyroll:episodeTitle>
+<crunchyroll:episodeNumber>16</crunchyroll:episodeNumber>
+<crunchyroll:duration>1420</crunchyroll:duration>
+<crunchyroll:publisher>Warner Japan</crunchyroll:publisher>
+<crunchyroll:subtitleLanguages>pt - br</crunchyroll:subtitleLanguages>
+<media:content type="video/mp4" medium="video" duration="1420"/>
+<media:player width="720" height="480">
+<iframe src="https://www.crunchyroll.com/affiliate_iframeplayer?media_id=818271&video_format=0&video_quality=0&auto_play=0" width="720" height="480" allowfullscreen allow="encrypted-media"></iframe>
+</media:player>
+<media:restriction relationship="allow" type="country">
+af ax al dz as ad ao ai aq ag ar am aw au at az bs bh bb by be bz bj bm bo bq ba bw bv br bg bf bi cm ca cv ky cf td cl cx cc co km cg cd cr ci hr cu cw cy cz dk dj dm do ec eg sv gq er ee et fk fo fi fr gf tf ga gm ge de gh gi gr gl gd gp gu gt gg gn gw gy ht hm va hn hu is ir iq ie im il it jm je jo ke kw lv lb ls lr ly li lt lu mk mg mw ml mt mq mr mu yt mx md mc me ms ma mz na nl an nz ni ne ng nf mp no om ps pa py pe pl pt pr qa re ro ru rw bl sh kn lc mf pm vc sm st sa sn rs sc sl sx sk si so za gs ss es sd sr sj sz se ch sy tj tz tg tt tn tr tm tc ug ua ae gb us um uy uz ve vg vi wf eh ye zm zw
+</media:restriction>
+<media:credit role="distribution company">Ellation LLC</media:credit>
+<media:rating scheme="urn:simple">nonadult</media:rating>
+<media:thumbnail url="https://img1.ak.crunchyroll.com/i/spire2-tmb/20f483f100becef8a5f61615807f3f8c1627629153_full.jpg" width="640" height="360"/>
+<media:thumbnail url="https://img1.ak.crunchyroll.com/i/spire2-tmb/20f483f100becef8a5f61615807f3f8c1627629153_large.jpg" width="200" height="112"/>
+<media:thumbnail url="https://img1.ak.crunchyroll.com/i/spire2-tmb/20f483f100becef8a5f61615807f3f8c1627629153_thumb.jpg" width="160" height="90"/>
+<media:thumbnail url="https://img1.ak.crunchyroll.com/i/spire2-tmb/20f483f100becef8a5f61615807f3f8c1627629153_medium.jpg" width="100" height="56"/>
+<media:thumbnail url="https://img1.ak.crunchyroll.com/i/spire2-tmb/20f483f100becef8a5f61615807f3f8c1627629153_small.jpg" width="50" height="28"/>
+<media:keywords>
+isekai, action, fantasy, deutsche synchro, adventure
+</media:keywords>
+<crunchyroll:modifiedDate>Fri, 17 Sep 2021 14:45:04 GMT</crunchyroll:modifiedDate>*/
+    
+}
+
 // search 1
 async function doSearch(){
     // search params
@@ -248,7 +357,7 @@ async function doSearch(){
         clases: 'series',
         media_types: 'anime',
         fields: 'series.series_id,series.name,series.year',
-        offset: argv.p ? ( parseInt(argv.p) - 1 ) * 100 : 0,
+        offset: argv.page ? ( parseInt(argv.page) - 1 ) * 100 : 0,
         limit: 100,
         locale: argv['search-locale'] ? argv['search-locale'] : 'enUS',
     });
@@ -332,7 +441,7 @@ async function doSearch2(){
     argv['search-locale'] = argv['search-locale'].replace(/-/, '');
     const params = new URLSearchParams({
         q: argv.search2,
-        sp: argv.p ? parseInt(argv.p) - 1 : 0,
+        sp: argv.page ? parseInt(argv.page) - 1 : 0,
         limit: 100,
         st: 'm',
         locale: argv['search-locale'] ? argv['search-locale'] : 'enUS',
@@ -395,7 +504,7 @@ async function doSearch2(){
 
 async function getSeasonById(){
     // request episode list
-    const epListRss = `${api.rss_cid}${argv.s}`;
+    const epListRss = `${api.rss_cid}${argv.season}`;
     const epListReq = await req.getData(epListRss, { useProxy: true });
     if(!epListReq.ok){ return; }
     
@@ -442,7 +551,7 @@ async function getSeasonById(){
         argv.appstore.audDubT = argv.dub;
     }
     
-    console.log(`[S:${argv.s}] ${seasonTitle}`, (isSimul ? '[SIMULCAST]' : ''));
+    console.log(`[S:${argv.season}] ${seasonTitle}`, (isSimul ? '[SIMULCAST]' : ''));
     console.log('[URL]', epListRss);
     
     const epNumList = { ep: [], sp: 0 };
@@ -451,7 +560,7 @@ async function getSeasonById(){
     const endPubDateMax = 253368028800000;
     
     const doEpsFilter = new epsFilter.doFilter();
-    const selEps = doEpsFilter.checkFilter(argv.e);
+    const selEps = doEpsFilter.checkFilter(argv.episode);
     const selectedMedia = [];
     
     for(let idx in Array(epsListCount).fill()){
@@ -528,6 +637,9 @@ async function getSeasonById(){
         if(epPubDate.freeLeft > 0){
             console.log(`   - FreePubDate: ${shlp.dateString(epPubDate.free)} (in ${shlp.formatTime((epPubDate.freeLeft)/1000)})`);
         }
+        if(epPubDate.premLeft == 0 && epPubDate.freeLeft == 0){
+            console.log(`   - PubDate: ${shlp.dateString(epPubDate.prem)}`);
+        }
         if(epPubDate.endLeft != -1){
             const endedIn = epPubDate.endLeft > 0 ? ` (in ${shlp.formatTime((epPubDate.endLeft)/1000)})` : '';
             console.log('   - EndPubDate:  %s%s', shlp.dateString(epPubDate.end), endedIn);
@@ -555,7 +667,7 @@ async function getSeasonById(){
 async function getMediaById(){
     // default
     const doEpsFilter = new epsFilter.doFilter();
-    const inpMedia = doEpsFilter.checkMediaFilter(argv.e);
+    const inpMedia = doEpsFilter.checkMediaFilter(argv.episode);
     if(inpMedia.length > 0){
         console.log('[INFO] Selected media:', inpMedia.join(', '), '\n');
         for(let id of inpMedia){
@@ -602,7 +714,7 @@ async function getMedia(mMeta){
         return m;
     });
     let msgHasErrors = msgItems.filter(m => m.type == 'ERROR').length > 0 ? true : false;
-    if(msgItems.length > 0 && argv.pagemsgs || msgItems && msgHasErrors){
+    if(msgItems.length > 0 || msgItems && msgHasErrors){
         let msgItemsArr = [];
         console.log('[INFO] PAGE MSGs:');
         for(let m of msgItems){
@@ -680,12 +792,12 @@ async function getMedia(mMeta){
     
     let epNum = mediaData.metadata.episode_number ? mediaData.metadata.episode_number : mMeta.episodeNumber;
     if(epNum != '' && epNum !== null){
-        epNum = epNum.match(/^\d+$/) ? epNum.padStart(argv.el, '0') : epNum;
+        epNum = epNum.match(/^\d+$/) ? epNum.padStart(argv['episode-number-length'], '0') : epNum;
     }
     
     argv.appstore.fn = {};
-    argv.appstore.fn.title = argv.t ? argv.t : mMeta.seasonTitle,
-    argv.appstore.fn.epnum = !argv.appstore.isBatch && argv.ep ? argv.ep : epNum;
+    argv.appstore.fn.title = argv.title ? argv.title : mMeta.seasonTitle,
+    argv.appstore.fn.epnum = !argv.appstore.isBatch && argv['episode-number'] ? argv['episode-number'] : epNum;
     argv.appstore.fn.epttl = mMeta.episodeTitle;
     argv.appstore.fn.out   = fnOutputGen();
     
@@ -733,7 +845,7 @@ async function getMedia(mMeta){
     
     if(argv.hslang != 'none'){
         if(hsLangs.indexOf(argv.hslang) > -1){
-            console.log('[INFO] Selecting stream with %s hardsubs', argv.hslang);
+            console.log('[INFO] Selecting stream with %s hardsubs', langsData.locale2language(argv.hslang).language);
             streams = streams.filter((s) => {
                 if(s.hardsub_lang == '-'){
                     return false;
@@ -742,7 +854,7 @@ async function getMedia(mMeta){
             });
         }
         else{
-            console.log('[WARN] Selected stream with %s hardsubs not available', argv.hslang);
+            console.log('[WARN] Selected stream with %s hardsubs not available', langsData.locale2language(argv.hslang).language);
             if(hsLangs.length > 0){
                 console.log('[WARN] Try other hardsubs stream:', hsLangs.join(', '));
             }
@@ -843,20 +955,20 @@ async function getMedia(mMeta){
                 }
             }
             
-            argv.x = argv.x > plServerList.length ? 1 : argv.x;
-            argv.q = argv.q == 'max' ? `${plMaxQuality}p` : argv.q;
+            argv.server = argv.server > plServerList.length ? 1 : argv.server;
+            argv.quality = argv.quality == 'max' ? `${plMaxQuality}p` : argv.quality;
             argv.appstore.fn.out = fnOutputGen();
             
-            let plSelectedServer = plServerList[argv.x - 1];
+            let plSelectedServer = plServerList[argv.server - 1];
             let plSelectedList   = plStreams[plSelectedServer];
-            let selPlUrl = plSelectedList[argv.q] ? plSelectedList[argv.q] : '';
+            let selPlUrl = plSelectedList[argv.quality] ? plSelectedList[argv.quality] : '';
             
             plQualityStr.sort();
             console.log(`[INFO] Servers available:\n\t${plServerList.join('\n\t')}`);
             console.log(`[INFO] Available qualities:\n\t${plQualityStr.join('\n\t')}`);
             
             if(selPlUrl != ''){
-                console.log(`[INFO] Selected quality: ${argv.q} @ ${plSelectedServer}`);
+                console.log(`[INFO] Selected quality: ${argv.quality} @ ${plSelectedServer}`);
                 if(argv['show-stream-url']){
                     console.log('[INFO] Stream URL:', selPlUrl);
                 }
@@ -915,8 +1027,8 @@ async function getMedia(mMeta){
     }
     
     // fix max quality for non streams
-    if(argv.q == 'max'){
-        argv.q = '1080p';
+    if(argv.quality == 'max'){
+        argv.quality = '1080p';
         argv.appstore.fn.out = fnOutputGen();
     }
     
@@ -924,6 +1036,11 @@ async function getMedia(mMeta){
     
     if(argv.dlsubs.indexOf('all') > -1){
         argv.dlsubs = ['all'];
+    }
+    
+    if(argv.hslang != 'none'){
+        console.log('[WARN] Subtitles downloading disabled for hardsubs streams.');
+        argv.skipsubs = true;
     }
     
     if(!argv.skipsubs && argv.dlsubs.indexOf('none') == -1){
@@ -983,9 +1100,10 @@ async function muxStreams(){
     const muxFile = path.join(cfg.dir.content, argv.appstore.fn.out);
     const sxList = argv.appstore.sxList;
     const audioDub = argv.dub;
-    const addSubs = argv.mks && sxList.length > 0 ? true : false;
+    const addSubs = argv.muxsubs && sxList.length > 0 ? true : false;
     // set vars
-    let ftag = shlp.cleanupFilename((typeof argv.ftag != 'undefined' ? argv.ftag : argv.a).toString());
+    const vtag = appMux.constructVideoTag(argv['video-tag'], argv['group-tag'], argv.hslang);
+    const vlang = argv.hslang != 'none' ? argv.hslang : 'und';
     let setMainSubLang = argv.defsublang != 'none' ? argv.defsublang : false;
     let isMuxed = false;
     // skip if no ts
@@ -1002,10 +1120,18 @@ async function muxStreams(){
     if(!merger.MKVmerge && !merger.FFmpeg || argv.mp4 && !merger.MKVmerge){
         console.log('[WARN] FFmpeg not found...');
     }
+    // muxers additional options
+    const muxOpts = { 
+        audioDub,
+        addSubs,
+        vtag,
+        vlang,
+        setMainSubLang,
+    };
     // do mkvmerge
     if(!argv.mp4 && merger.MKVmerge){
         const mkvmux = await appMux.buildCommandMkvMerge(muxFile, sxList, fontList, {
-            audioDub, addSubs, ftag, setMainSubLang, useBCP: argv.bcp,
+            ...muxOpts, useBCP: argv['use-bcp-tags'],
         });
         fs.writeFileSync(`${muxFile}.json`,JSON.stringify(mkvmux, null, '  '));
         try{
@@ -1020,7 +1146,7 @@ async function muxStreams(){
         const outputFormat = !argv.mp4 ? 'mkv' : 'mp4';
         const subsCodec = !argv.mp4 ? 'copy' : 'mov_text';
         const ffmux = await appMux.buildCommandFFmpeg(muxFile, sxList, fontList, {
-            outputFormat, audioDub, addSubs, subsCodec, ftag, setMainSubLang,
+            ...muxOpts, outputFormat, subsCodec,
         });
         try{ 
             shlp.exec('ffmpeg',`"${merger.FFmpeg}"`, ffmux);
@@ -1103,10 +1229,10 @@ function fnOutputGen(){
         argv.appstore.fn = {};
     }
     const fnPrepOutput = argv.filename.toString()
-        .replace('{rel_group}', argv.a)
+        .replace('{rel_group}', argv['group-tag'])
         .replace('{title}',     argv.appstore.fn.title)
         .replace('{ep_num}',    argv.appstore.fn.epnum)
         .replace('{ep_titl}',   argv.appstore.fn.epttl)
-        .replace('{suffix}',    argv.suffix.replace('SIZEp', argv.q));
+        .replace('{suffix}',    argv.suffix.replace('SIZEp', argv.quality));
     return shlp.cleanupFilename(fnPrepOutput);
 }

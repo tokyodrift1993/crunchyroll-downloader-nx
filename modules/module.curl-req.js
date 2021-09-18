@@ -4,10 +4,10 @@ const fs = require('fs-extra');
 const path = require('path');
 
 // req
-const curlReq = async (url, options, cache) => {
+const curlReq = async (curlBin, url, options, cache) => {
     
     let curlOpt = [
-        'curl',
+        `"${curlBin}"`,
         `"${url}"`,
     ];
     
@@ -52,7 +52,7 @@ const curlReq = async (url, options, cache) => {
     
     try{
         if(options.curlDebug){
-            console.log(curlOpt);
+            console.log(curlOpt, '\n');
         }
         child_process.execSync(curlOpt, { stdio: 'inherit', windowsHide: true });
     }

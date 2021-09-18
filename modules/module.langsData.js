@@ -134,12 +134,27 @@ const dubRegExpStr =
     `\\((${Object.keys(dubLanguages).join('|')})(?: (Dub|VO))?\\)$`;
 const dubRegExp = new RegExp(dubRegExpStr);
 
+// code to lang name
+const langCode2name = (code) => {
+    const codeIdx = dubLanguageCodes.indexOf(code);
+    return Object.keys(dubLanguages)[codeIdx];
+};
+
+// locale to lang name
+const locale2language = (locale) => {
+    locale = languages.filter(l => {
+        return l.locale == locale;
+    });
+    return locale[0];
+};
 
 // output
 module.exports = {
     languages,
     dubLanguageCodes,
     dubLanguages,
+    langCode2name,
+    locale2language,
     dubRegExp,
     subtitleLanguagesFilter,
     searchLocales,

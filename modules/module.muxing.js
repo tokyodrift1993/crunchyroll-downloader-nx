@@ -1,7 +1,7 @@
 // muxing only modules
-const fs = require('fs');
+const fs = require('fs-extra');
 const path = require('path');
-const { lookpath } = require('lookpath');
+const langsData = require('./module.langsData');
 
 // check if ts file exists
 const checkTSFile = (file) => {
@@ -14,10 +14,10 @@ const checkTSFile = (file) => {
 };
 
 // check mergers programs
-const checkMerger = async (binFolder, useMP4format) => {
+const checkMerger = (bin, useMP4format) => {
     const merger = {
-        MKVmerge: await lookpath(path.join(binFolder.mkvmerge)),
-        FFmpeg: await lookpath(path.join(binFolder.ffmpeg)),
+        MKVmerge: bin.mkvmerge,
+        FFmpeg: bin.ffmpeg,
     };
     if( !useMP4format && !merger.MKVmerge ){
         console.log('[WARN] MKVMerge not found, skip using this...');
@@ -31,13 +31,18 @@ const checkMerger = async (binFolder, useMP4format) => {
 };
 
 const makeFontsList = (fontsDir, fontsData, subs) => {
-    let fontsNameList = [], fontsList = [];
+    let fontsNameList = [], fontsList = [], subsList = [], isNstr = true;
     for(const s of subs){
         fontsNameList.push(...s.fonts);
+        subsList.push(s.language.locale);
     }
     fontsNameList = [...new Set(fontsNameList)];
+    if(subsList.length > 0){
+        console.log('\n[INFO] Subtitles: %s (Total: %s)', subsList.join(', '), subsList.length);
+        isNstr = false;
+    }
     if(fontsNameList.length > 0){
-        console.log('\n[INFO] Required fonts (%s): %s', fontsNameList.length, fontsNameList.join(', '));
+        console.log((isNstr ? '\n' : '') + '[INFO] Required fonts: %s (Total: %s)', fontsNameList.join(', '), fontsNameList.length);
     }
     for(const f of fontsNameList){
         const fontFile = fontsData.fonts[f];
@@ -62,7 +67,12 @@ const buildCommandMkvMerge = (video, subtitles, fonts, options) => {
     mkvmux.push('--output', `${video}.mkv`);
     mkvmux.push('--no-date', '--disable-track-statistics-tags', '--engage', 'no_variable_data');
     // video
-    mkvmux.push('--track-name',`0:[${options.ftag}]`);
+    mkvmux.push('--track-name',`0:${options.vtag}`);
+    if(options.vlang != 'und'){
+        const vlang = options.useBCP ? options.vlang : bcp2code(options.vlang);
+        mkvmux.push('--language',`0:${vlang}`);
+    }
+    mkvmux.push('--track-name',`1:${code2lang(options.audioDub)}`);
     mkvmux.push('--language',`1:${options.audioDub}`);
     mkvmux.push('--video-tracks','0','--audio-tracks','1');
     mkvmux.push('--no-subtitles','--no-attachments');
@@ -125,7 +135,12 @@ const buildCommandFFmpeg = (video, subtitles, fonts, options) => {
     }
     // additional data
     ffmux.push('-metadata', '"encoding_tool=no_variable_data"');
-    ffmux.push('-metadata:s:v:0', `"title=[${toSaveStr(options.ftag)}]"`);
+    ffmux.push('-metadata:s:v:0', `"title=${toSaveStr(options.vtag)}"`);
+    if(options.vlang != 'und'){
+        const vlang = bcp2code(options.vlang);
+        ffmux.push('-metadata:s:v:0', `"language=${vlang}"`);
+    }
+    ffmux.push('-metadata:s:a:0', `"title=${code2lang(options.audioDub)}"`);
     ffmux.push('-metadata:s:a:0', `"language=${options.audioDub}"`);
     ffmux.push(...ffmeta);
     // output file
@@ -134,8 +149,26 @@ const buildCommandFFmpeg = (video, subtitles, fonts, options) => {
     return ffmux.join(' ');
 };
 
+function constructVideoTag(vtag, gtag, hslang){
+    vtag = vtag != '' ? vtag : gtag;
+    vtag = vtag == '' ? 'CR' : vtag;
+    vtag = `[${vtag}]`;
+    if(hslang != 'none'){
+        vtag = vtag + ' / ' + langsData.locale2language(hslang).language;
+    }
+    return vtag;
+}
+
+function bcp2code(vlang){
+    return langsData.locale2language(vlang).code;
+}
+
+function code2lang(code){
+    return langsData.langCode2name(code);
+}
+
 function toSaveStr(str){
-    return str.replace(/"|'/g, '’');
+    return str.replace(/"/g, '\'\'');
 }
 
 module.exports = {
@@ -144,4 +177,5 @@ module.exports = {
     makeFontsList,
     buildCommandMkvMerge,
     buildCommandFFmpeg,
+    constructVideoTag,
 };

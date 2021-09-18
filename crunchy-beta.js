@@ -27,16 +27,8 @@ const appPatch = fs.existsSync('./modules/patch.js')
     : { active: false };
 
 // new-cfg paths
-const workingDir   = process.pkg ? path.dirname(process.execPath) : __dirname;
-const cfgFolder    = path.join(workingDir, '/config');
-const binCfgFile   = path.join(cfgFolder, 'bin-path');
-const dirCfgFile   = path.join(cfgFolder, 'dir-path');
-const cliCfgFile   = path.join(cfgFolder, 'cli-defaults');
-const tokenCfgFile = path.join(cfgFolder, 'token');
-const cfg          = yamlCfg.loadCfg(workingDir, binCfgFile, dirCfgFile, cliCfgFile);
-
-// custom
-let token = yamlCfg.loadCRToken(tokenCfgFile);
+const cfg = yamlCfg.loadCfg();
+let token = yamlCfg.loadCRToken();
 let cmsToken = {};
 
 // args
@@ -47,10 +39,12 @@ argv.appstore = {};
 // load req
 const { domain, api } = require('./modules/module.api-urls');
 const reqModule = require('./modules/module.req');
-const req = new reqModule.Req(domain, argv, '', true);
+const req = new reqModule.Req(domain, argv, true);
 
 // select
 (async () => {
+    // load binaries
+    cfg.bin = await yamlCfg.loadBinCfg();
     // select mode
     if(argv.dlfonts){
         await getFonts();
@@ -62,32 +56,32 @@ const req = new reqModule.Req(domain, argv, '', true);
         await refreshToken();
         await getCmsData();
     }
-    else if(argv.search && argv.search.length > 2){
-        await refreshToken();
-        await doSearch();
-    }
     else if(argv.new){
         await refreshToken();
         await getNewlyAdded();
     }
-    else if(argv.srz && argv.srz.match(/^[0-9A-Z]{9}$/)){
+    else if(argv.search && argv.search.length > 2){
+        await refreshToken();
+        await doSearch();
+    }
+    else if(argv.series && argv.series.match(/^[0-9A-Z]{9}$/)){
         await refreshToken();
         await getSeriesById();
     }
-    else if(argv.flm && argv.flm.match(/^[0-9A-Z]{9}$/)){
+    else if(argv['movie-listing'] && argv['movie-listing'].match(/^[0-9A-Z]{9}$/)){
         await refreshToken();
         await getMovieListingById();
     }
-    else if(argv.s && argv.s.match(/^[0-9A-Z]{9}$/)){
+    else if(argv.season && argv.season.match(/^[0-9A-Z]{9}$/)){
         await refreshToken();
         await getSeasonById();
     }
-    else if(argv.e){
+    else if(argv.episode){
         await refreshToken();
         await getObjectById();
     }
     else{
-        appYargs.showHelp();
+        // appYargs.showHelp();
     }
 })();
 
@@ -146,7 +140,7 @@ async function doAuth(){
     }
     token = JSON.parse(authReq.res.body);
     token.expires = new Date(Date.now() + token.expires_in);
-    yamlCfg.saveCRToken(tokenCfgFile, token);
+    yamlCfg.saveCRToken(token);
     await getProfile();
     console.log('[INFO] Your Country: %s', token.country);
 }
@@ -190,7 +184,7 @@ async function doAnonymousAuth(){
     }
     token = JSON.parse(authReq.res.body);
     token.expires = new Date(Date.now() + token.expires_in);
-    yamlCfg.saveCRToken(tokenCfgFile, token);
+    yamlCfg.saveCRToken(token);
 }
 
 // refresh token
@@ -220,7 +214,7 @@ async function refreshToken(){
         }
         token = JSON.parse(authReq.res.body);
         token.expires = new Date(Date.now() + token.expires_in);
-        yamlCfg.saveCRToken(tokenCfgFile, token);
+        yamlCfg.saveCRToken(token);
     }
     if(token.refresh_token){
         await getProfile();
@@ -270,7 +264,7 @@ async function getCmsData(){
     ].join('');
     const indexReq = await req.getData(indexReqOpts, { useProxy: true });
     if(!indexReq.ok){
-        console.log('[ERROR] Get cms index FAILED!');
+        console.log('[ERROR] Get CMS index FAILED!');
         return;
     }
     console.log(JSON.parse(indexReq.res.body));
@@ -290,7 +284,7 @@ async function doSearch(){
     const searchParams = new URLSearchParams({
         q: argv.search,
         n: 5,
-        start: argv.p ? (parseInt(argv.p)-1)*5 : 0,
+        start: argv.page ? (parseInt(argv.page)-1)*5 : 0,
         type: argv['search-type'],
         locale: argv['search-locale'],
     }).toString();
@@ -447,7 +441,7 @@ async function parseObject(item, pad, getSeries, getMovieListing){
             langsData.parseSubtitlesArray(iMetadata.subtitle_locales)
         );
     }
-    if(item.availability_notes){
+    if(item.availability_notes && argv.shownotes){
         console.log(
             '%s- Availability notes: %s',
             ''.padStart(pad + 2, ' '),
@@ -455,11 +449,11 @@ async function parseObject(item, pad, getSeries, getMovieListing){
         );
     }
     if(item.type == 'series' && getSeries){
-        argv.srz = item.id;
+        argv.series = item.id;
         await getSeriesById(pad, true);
     }
     if(item.type == 'movie_listing' && getMovieListing){
-        argv.flm = item.id;
+        argv['movie-listing'] = item.id;
         await getMovieListingById(pad+2);
     }
 }
@@ -478,7 +472,7 @@ async function getSeriesById(pad, hideSeriesTitle){
         api.beta_cms,
         cmsToken.cms.bucket,
         '/series/',
-        argv.srz,
+        argv.series,
         '?',
         new URLSearchParams({
             'Policy': cmsToken.cms.policy,
@@ -491,7 +485,7 @@ async function getSeriesById(pad, hideSeriesTitle){
         cmsToken.cms.bucket,
         '/seasons?',
         new URLSearchParams({
-            'series_id': argv.srz,
+            'series_id': argv.series,
             'Policy': cmsToken.cms.policy,
             'Signature': cmsToken.cms.signature,
             'Key-Pair-Id': cmsToken.cms.key_pair_id,
@@ -535,7 +529,7 @@ async function getMovieListingById(pad){
         cmsToken.cms.bucket,
         '/movies?',
         new URLSearchParams({
-            'movie_listing_id': argv.flm,
+            'movie_listing_id': argv['movie-listing'],
             'Policy': cmsToken.cms.policy,
             'Signature': cmsToken.cms.signature,
             'Key-Pair-Id': cmsToken.cms.key_pair_id,
@@ -570,7 +564,7 @@ async function getNewlyAdded(){
     const newlyAddedParams = new URLSearchParams({
         sort_by: 'newly_added',
         n: 25,
-        start: argv.p ? (parseInt(argv.p)-1)*25 : 0,
+        start: argv.page ? (parseInt(argv.page)-1)*25 : 0,
     }).toString();
     let newlyAddedReq = await req.getData(`${api.beta_browse}?${newlyAddedParams}`, newlyAddedReqOpts);
     if(!newlyAddedReq.ok){
@@ -580,7 +574,7 @@ async function getNewlyAdded(){
     let newlyAddedResults = JSON.parse(newlyAddedReq.res.body);
     console.log('[INFO] Newly added:');
     for(const i of newlyAddedResults.items){
-        await parseObject(i, 2, false, false);
+        await parseObject(i, 2);
     }
     // calculate pages
     let itemPad = parseInt(new URL(newlyAddedResults.__href__, domain.api_beta).searchParams.get('start'));
@@ -599,7 +593,7 @@ async function getSeasonById(){
         api.beta_cms,
         cmsToken.cms.bucket,
         '/seasons/',
-        argv.s,
+        argv.season,
         '?',
         new URLSearchParams({
             'Policy': cmsToken.cms.policy,
@@ -619,7 +613,7 @@ async function getSeasonById(){
         cmsToken.cms.bucket,
         '/episodes?',
         new URLSearchParams({
-            'season_id': argv.s,
+            'season_id': argv.season,
             'Policy': cmsToken.cms.policy,
             'Signature': cmsToken.cms.signature,
             'Key-Pair-Id': cmsToken.cms.key_pair_id,
@@ -641,7 +635,7 @@ async function getSeasonById(){
     }
     
     const doEpsFilter = new epsFilter.doFilter();
-    const selEps = doEpsFilter.checkFilter(argv.e);
+    const selEps = doEpsFilter.checkFilter(argv.episode);
     const selectedMedia = [];
     
     episodeList.items.forEach((item) => {
@@ -708,7 +702,7 @@ async function getObjectById(returnData){
     }
     
     const doEpsFilter = new epsFilter.doFilter();
-    const inpMedia = doEpsFilter.checkBetaFilter(argv.e);
+    const inpMedia = doEpsFilter.checkBetaFilter(argv.episode);
     
     if(inpMedia.length < 1){
         console.log('\n[INFO] Objects not selected!\n');
@@ -752,7 +746,7 @@ async function getObjectById(returnData){
     
     for(const item of objectInfo.items){
         if(item.type != 'episode' && item.type != 'movie'){
-            await parseObject(item, 2, false, false);
+            await parseObject(item, 2, true, false);
             continue;
         }
         const epMeta = {};
@@ -816,12 +810,12 @@ async function getMedia(mMeta){
     
     let epNum = mMeta.episodeNumber;
     if(epNum != '' && epNum !== null){
-        epNum = epNum.match(/^\d+$/) ? epNum.padStart(argv.el, '0') : epNum;
+        epNum = epNum.match(/^\d+$/) ? epNum.padStart(argv['episode-number-length'], '0') : epNum;
     }
     
     argv.appstore.fn = {};
-    argv.appstore.fn.title = argv.t ? argv.t : mMeta.seasonTitle,
-    argv.appstore.fn.epnum = !argv.appstore.isBatch && argv.ep ? argv.ep : epNum;
+    argv.appstore.fn.title = argv.title ? argv.title : mMeta.seasonTitle,
+    argv.appstore.fn.epnum = !argv.appstore.isBatch && argv.episode ? argv.episode : epNum;
     argv.appstore.fn.epttl = mMeta.episodeTitle;
     argv.appstore.fn.out   = fnOutputGen();
     
@@ -866,7 +860,7 @@ async function getMedia(mMeta){
     
     if(argv.hslang != 'none'){
         if(hsLangs.indexOf(argv.hslang) > -1){
-            console.log('[INFO] Selecting stream with %s hardsubs', argv.hslang);
+            console.log('[INFO] Selecting stream with %s hardsubs', langsData.locale2language(argv.hslang).language);
             streams = streams.filter((s) => {
                 if(s.hardsub_lang == '-'){
                     return false;
@@ -875,7 +869,7 @@ async function getMedia(mMeta){
             });
         }
         else{
-            console.log('[WARN] Selected stream with %s hardsubs not available', argv.hslang);
+            console.log('[WARN] Selected stream with %s hardsubs not available', langsData.locale2language(argv.hslang).language);
             if(hsLangs.length > 0){
                 console.log('[WARN] Try other hardsubs stream:', hsLangs.join(', '));
             }
@@ -976,20 +970,20 @@ async function getMedia(mMeta){
                 }
             }
             
-            argv.x = argv.x > plServerList.length ? 1 : argv.x;
-            argv.q = argv.q == 'max' ? `${plMaxQuality}p` : argv.q;
+            argv.server = argv.server > plServerList.length ? 1 : argv.server;
+            argv.quality = argv.quality == 'max' ? `${plMaxQuality}p` : argv.quality;
             argv.appstore.fn.out = fnOutputGen();
             
-            let plSelectedServer = plServerList[argv.x - 1];
+            let plSelectedServer = plServerList[argv.server - 1];
             let plSelectedList   = plStreams[plSelectedServer];
-            let selPlUrl = plSelectedList[argv.q] ? plSelectedList[argv.q] : '';
+            let selPlUrl = plSelectedList[argv.quality] ? plSelectedList[argv.quality] : '';
             
             plQualityStr.sort();
             console.log(`[INFO] Servers available:\n\t${plServerList.join('\n\t')}`);
             console.log(`[INFO] Available qualities:\n\t${plQualityStr.join('\n\t')}`);
             
             if(selPlUrl != ''){
-                console.log(`[INFO] Selected quality: ${argv.q} @ ${plSelectedServer}`);
+                console.log(`[INFO] Selected quality: ${argv.quality} @ ${plSelectedServer}`);
                 if(argv['show-stream-url']){
                     console.log('[INFO] Stream URL:', selPlUrl);
                 }
@@ -1048,8 +1042,8 @@ async function getMedia(mMeta){
     }
     
     // fix max quality for non streams
-    if(argv.q == 'max'){
-        argv.q = '1080p';
+    if(argv.quality == 'max'){
+        argv.quality = '1080p';
         argv.appstore.fn.out = fnOutputGen();
     }
     
@@ -1057,6 +1051,11 @@ async function getMedia(mMeta){
     
     if(argv.dlsubs.indexOf('all') > -1){
         argv.dlsubs = ['all'];
+    }
+    
+    if(argv.hslang != 'none'){
+        console.log('[WARN] Subtitles downloading disabled for hardsubs streams.');
+        argv.skipsubs = true;
     }
     
     if(!argv.skipsubs && argv.dlsubs.indexOf('none') == -1){
@@ -1117,9 +1116,10 @@ async function muxStreams(){
     const muxFile = path.join(cfg.dir.content, argv.appstore.fn.out);
     const sxList = argv.appstore.sxList;
     const audioDub = argv.dub;
-    const addSubs = argv.mks && sxList.length > 0 ? true : false;
+    const addSubs = argv.muxsubs && sxList.length > 0 ? true : false;
     // set vars
-    let ftag = shlp.cleanupFilename((typeof argv.ftag != 'undefined' ? argv.ftag : argv.a).toString());
+    const vtag = appMux.constructVideoTag(argv['video-tag'], argv['group-tag'], argv.hslang);
+    const vlang = argv.hslang != 'none' ? argv.hslang : 'und';
     let setMainSubLang = argv.defsublang != 'none' ? argv.defsublang : false;
     let isMuxed = false;
     // skip if no ts
@@ -1136,10 +1136,18 @@ async function muxStreams(){
     if(!merger.MKVmerge && !merger.FFmpeg || argv.mp4 && !merger.MKVmerge){
         console.log('[WARN] FFmpeg not found...');
     }
+    // muxers additional options
+    const muxOpts = { 
+        audioDub,
+        addSubs,
+        vtag,
+        vlang,
+        setMainSubLang,
+    };
     // do mkvmerge
     if(!argv.mp4 && merger.MKVmerge){
         const mkvmux = await appMux.buildCommandMkvMerge(muxFile, sxList, fontList, {
-            audioDub, addSubs, ftag, setMainSubLang, useBCP: argv.bcp,
+            ...muxOpts, useBCP: argv['use-bcp-tags'],
         });
         fs.writeFileSync(`${muxFile}.json`,JSON.stringify(mkvmux, null, '  '));
         try{
@@ -1154,7 +1162,7 @@ async function muxStreams(){
         const outputFormat = !argv.mp4 ? 'mkv' : 'mp4';
         const subsCodec = !argv.mp4 ? 'copy' : 'mov_text';
         const ffmux = await appMux.buildCommandFFmpeg(muxFile, sxList, fontList, {
-            outputFormat, audioDub, addSubs, subsCodec, ftag, setMainSubLang,
+            ...muxOpts, outputFormat, subsCodec,
         });
         try{ 
             shlp.exec('ffmpeg',`"${merger.FFmpeg}"`, ffmux);
@@ -1237,10 +1245,10 @@ function fnOutputGen(){
         argv.appstore.fn = {};
     }
     const fnPrepOutput = argv.filename.toString()
-        .replace('{rel_group}', argv.a)
+        .replace('{rel_group}', argv['group-tag'])
         .replace('{title}',     argv.appstore.fn.title)
         .replace('{ep_num}',    argv.appstore.fn.epnum)
         .replace('{ep_titl}',   argv.appstore.fn.epttl)
-        .replace('{suffix}',    argv.suffix.replace('SIZEp', argv.q));
+        .replace('{suffix}',    argv.suffix.replace('SIZEp', argv.quality));
     return shlp.cleanupFilename(fnPrepOutput);
 }

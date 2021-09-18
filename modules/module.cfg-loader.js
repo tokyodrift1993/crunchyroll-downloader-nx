@@ -1,6 +1,16 @@
 const path = require('path');
 const yaml = require('yaml');
+
 const fs = require('fs-extra');
+const { lookpath } = require('lookpath');
+
+const workingDir   = process.pkg ? path.dirname(process.execPath) : path.join(__dirname, '/..');
+const cfgFolder    = path.join(workingDir, '/config');
+const binCfgFile   = path.join(cfgFolder, 'bin-path');
+const dirCfgFile   = path.join(cfgFolder, 'dir-path');
+const cliCfgFile   = path.join(cfgFolder, 'cli-defaults');
+const sessCfgFile  = path.join(cfgFolder, 'session');
+const tokenCfgFile = path.join(cfgFolder, 'token');
 
 const loadYamlCfgFile = (file, isSess) => {
     if(fs.existsSync(`${file}.user.yml`) && !isSess){
@@ -19,10 +29,10 @@ const loadYamlCfgFile = (file, isSess) => {
     return {};
 };
 
-const loadCfg = (workingDir, binCfgFile, dirCfgFile, cliCfgFile) => {
+const loadCfg = () => {
     // load cfgs
     const cfg = {
-        bin: loadYamlCfgFile(binCfgFile),
+        bin: '',
         dir: loadYamlCfgFile(dirCfgFile),
         cli: loadYamlCfgFile(cliCfgFile),
     };
@@ -30,20 +40,6 @@ const loadCfg = (workingDir, binCfgFile, dirCfgFile, cliCfgFile) => {
     for(const ctype of Object.keys(cfg)){
         if(typeof cfg[ctype] !== 'object' || cfg[ctype] === null || Array.isArray(cfg[ctype])){
             cfg[ctype] = {};
-        }
-    }
-    // binaries
-    const defaultBin = {
-        ffmpeg: '${wdir}/bin/ffmpeg/ffmpeg',
-        mkvmerge: '${wdir}/bin/mkvtoolnix/mkvmerge',
-    };
-    for(const dir of ['ffmpeg', 'mkvmerge']){
-        if(!Object.prototype.hasOwnProperty.call(cfg.bin, dir) || typeof cfg.bin[dir] != 'string'){
-            cfg.bin[dir] = defaultBin[dir];
-        }
-        if (!path.isAbsolute(cfg.bin[dir]) && cfg.bin[dir].match(/^\${wdir}/)){
-            cfg.bin[dir] = cfg.bin[dir].replace(/^\${wdir}/, '');
-            cfg.bin[dir] = path.join(workingDir, cfg.bin[dir]);
         }
     }
     // set defaults for dirs
@@ -56,10 +52,10 @@ const loadCfg = (workingDir, binCfgFile, dirCfgFile, cliCfgFile) => {
         if(!Object.prototype.hasOwnProperty.call(cfg.dir, dir) || typeof cfg.dir[dir] != 'string'){
             cfg.dir[dir] = defaultDirs[dir];
         }
-        if (!path.isAbsolute(cfg.dir[dir])){
-            if(cfg.dir[dir].match(/^\${wdir}/)){
-                cfg.dir[dir] = cfg.dir[dir].replace(/^\${wdir}/, '');
-            }
+        if(cfg.dir[dir].match(/^\${wdir}/)){
+            cfg.dir[dir] = path.join(cfg.dir[dir].replace(/^\${wdir}/, workingDir));
+        }
+        if(!path.isAbsolute(cfg.dir[dir])){
             cfg.dir[dir] = path.join(workingDir, cfg.dir[dir]);
         }
     }
@@ -79,7 +75,33 @@ const loadCfg = (workingDir, binCfgFile, dirCfgFile, cliCfgFile) => {
     return cfg;
 };
 
-const loadCRSession = (sessCfgFile) => {
+const loadBinCfg = async () => {
+    let binCfg = loadYamlCfgFile(binCfgFile);
+    // binaries
+    const defaultBin = {
+        ffmpeg: '${wdir}/bin/ffmpeg/ffmpeg',
+        mkvmerge: '${wdir}/bin/mkvtoolnix/mkvmerge',
+        curl: '${wdir}/bin/curl/curl',
+    };
+    for(const dir of Object.keys(defaultBin)){
+        if(!Object.prototype.hasOwnProperty.call(binCfg, dir) || typeof binCfg[dir] != 'string'){
+            binCfg[dir] = defaultBin[dir];
+        }
+        if (!path.isAbsolute(binCfg[dir]) && binCfg[dir].match(/^\${wdir}/)){
+            binCfg[dir] = binCfg[dir].replace(/^\${wdir}/, '');
+            binCfg[dir] = path.join(workingDir, binCfg[dir]);
+        }
+        binCfg[dir] = await lookpath(binCfg[dir]);
+        binCfg[dir] = binCfg[dir] ? binCfg[dir] : false;
+        if(!binCfg[dir]){
+            const binFile = await lookpath(path.basename(defaultBin[dir]));
+            binCfg[dir] = binFile ? binFile : binCfg[dir];
+        }
+    }
+    return binCfg;
+};
+
+const loadCRSession = () => {
     let session = loadYamlCfgFile(sessCfgFile, true);
     if(typeof session !== 'object' || session === null || Array.isArray(session)){
         session = {};
@@ -92,7 +114,7 @@ const loadCRSession = (sessCfgFile) => {
     return session;
 };
 
-const saveCRSession = (sessCfgFile, data) => {
+const saveCRSession = (data) => {
     const cfgFolder = path.dirname(sessCfgFile);
     try{
         fs.ensureDirSync(cfgFolder);
@@ -103,7 +125,7 @@ const saveCRSession = (sessCfgFile, data) => {
     }
 };
 
-const loadCRToken = (tokenCfgFile) => {
+const loadCRToken = () => {
     let token = loadYamlCfgFile(tokenCfgFile, true);
     if(typeof token !== 'object' || token === null || Array.isArray(token)){
         token = {};
@@ -111,7 +133,7 @@ const loadCRToken = (tokenCfgFile) => {
     return token;
 };
 
-const saveCRToken = (tokenCfgFile, data) => {
+const saveCRToken = (data) => {
     const cfgFolder = path.dirname(tokenCfgFile);
     try{
         fs.ensureDirSync(cfgFolder);
@@ -123,7 +145,16 @@ const saveCRToken = (tokenCfgFile, data) => {
 };
 
 module.exports = {
+    // path and files
+    cfgFolder,
+    binCfgFile,
+    dirCfgFile,
+    cliCfgFile,
+    sessCfgFile,
+    tokenCfgFile,
+    // functions
     loadCfg,
+    loadBinCfg,
     loadCRSession,
     saveCRSession,
     loadCRToken,

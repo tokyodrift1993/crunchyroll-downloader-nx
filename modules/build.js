@@ -3,7 +3,6 @@
 // build requirements
 const pkg = require('../package.json');
 const fs = require('fs-extra');
-const modulesCleanup = require('removeNPMAbsolutePaths');
 const { exec } = require('pkg');
 
 const buildsDir = './_builds';
@@ -24,7 +23,6 @@ async function doBuild(nodeVer){
         console.error('[ERROR] unknown build type!');
         process.exit(1);
     }
-    await modulesCleanup('.');
     if(!fs.existsSync(buildsDir)){
         fs.mkdirSync(buildsDir);
     }

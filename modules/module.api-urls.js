@@ -9,6 +9,7 @@ const domain = {
 // api urls
 const api = {
     // web
+    newani:            `${domain.www}/rss/anime`,
     search1:           `${domain.www}/ajax/?req=RpcApiSearch_GetSearchCandidates`,
     search2:           `${domain.www}/search_page`,
     rss_cid:           `${domain.www}/syndication/feed?type=episodes&id=`, // &lang=enUS

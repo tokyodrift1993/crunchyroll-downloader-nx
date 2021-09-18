@@ -102,16 +102,21 @@ class Args {
         );
         // series
         const seriesArgs = {};
+        Object.assign(
+            seriesArgs,
+            {
+                'new': {
+                    group: 'Downloading:',
+                    describe: 'Get last updated series list',
+                    type: 'boolean',
+                },
+            },
+        );
         // beta
         if(is_beta){
             Object.assign(
                 seriesArgs,
                 {
-                    'new': {
-                        group: 'Downloading:',
-                        describe: 'Get last updated series list',
-                        type: 'boolean',
-                    },
                     'movie-listing': {
                         alias: 'flm',
                         group: 'Downloading:',
@@ -225,6 +230,13 @@ class Args {
         }
         // muxing
         const muxingArgs = {
+            'video-tag': {
+                alias: [ 'ftag', 'vtag' ],
+                group: 'Muxing:',
+                describe: 'Release group',
+                default: '',
+                type: 'string'
+            },
             dub: {
                 group: 'Muxing:',
                 describe: 'Manually set audio language by language code',
@@ -347,6 +359,21 @@ class Args {
                 default: parseDefault('useFolder', false),
                 type: 'boolean',
             },
+            nosess: {
+                group: 'Utilities:',
+                describe: 'Reset Session cookie for testing proposes',
+                type: 'boolean',
+            },
+            debug: {
+                group: 'Utilities:',
+                describe: 'Debug mode',
+                type: 'boolean',
+            },
+            jsonmuxdebug: {
+                group: 'Utilities:',
+                describe: 'Debug mode (mkvmerge json)',
+                type: 'boolean',
+            },
             nocleanup: {
                 group: 'Utilities:',
                 describe: 'Move temporary files to trash folder instead of deleting',
@@ -361,8 +388,12 @@ class Args {
                 type: 'boolean',
             },
         };
+        // beta skip
+        if(is_beta){
+            delete utilArgs.nosess;
+        }
         // set options
-        yargs.options({
+        const yargsOpts = {
             ...authArgs,
             ...fontsArgs,
             ...searchArgs,
@@ -377,11 +408,16 @@ class Args {
                 describe: 'Show this help :)',
                 type: 'boolean',
             }},
-        });
+        };
+        yargs.options(yargsOpts);
         // --
     }
     appArgv(){
-        return yargs.argv;
+        const argv = yargs.argv;
+        if(!argv['group-tag'] || argv['group-tag'] == ''){
+            argv['group-tag'] = 'CR';
+        }
+        return argv;
     }
     showHelp(){
         yargs.showHelp();

@@ -300,51 +300,6 @@ async function getNewlyAdded(){
         }
         
     }
-    /*
-    <title>
-I'm Standing on a Million Lives (Portuguese Dub) - Episode 16 - The Island That Flows
-</title>
-<link>
-http://www.crunchyroll.com/ru/im-standing-on-a-million-lives/episode-16-the-island-that-flows-818271
-</link>
-<guid isPermalink="true">http://www.crunchyroll.com/media-818271</guid>
-<description>
-<img src="https://img1.ak.crunchyroll.com/i/spire2-tmb/20f483f100becef8a5f61615807f3f8c1627629153_thumb.jpg" /><br />The islanders have sent the women and children away on a boat to protect them from the upcoming battle, but the orcs find and target them. Shindou and Cantil move to stop them, but in the midst of the fight, the earth begins to shake violently as the volcano on the island erupts. Pandemonium breaks loose as volcanic bombs rain down on the island... but this is only the prologue to a much greater disaster.
-</description>
-<enclosure url="https://img1.ak.crunchyroll.com/i/spire2-tmb/20f483f100becef8a5f61615807f3f8c1627629153_thumb.jpg" type="image/jpeg" length="8733"/>
-<category>Anime</category>
-<media:category scheme="http://gdata.youtube.com/schemas/2007/categories.cat" label="Anime">Movies_Anime_animation</media:category>
-<crunchyroll:mediaId>818271</crunchyroll:mediaId>
-<pubDate>Fri, 17 Sep 2021 11:00:00 GMT</pubDate>
-<crunchyroll:freePubDate>Tue, 19 Jan 2038 00:27:28 GMT</crunchyroll:freePubDate>
-<crunchyroll:premiumPubDate>Fri, 17 Sep 2021 11:00:00 GMT</crunchyroll:premiumPubDate>
-<crunchyroll:endPubDate>Mon, 30 Nov 9998 08:00:00 GMT</crunchyroll:endPubDate>
-<crunchyroll:premiumEndPubDate>Mon, 30 Nov 9998 08:00:00 GMT</crunchyroll:premiumEndPubDate>
-<crunchyroll:freeEndPubDate>Mon, 30 Nov 9998 08:00:00 GMT</crunchyroll:freeEndPubDate>
-<crunchyroll:seriesTitle>I'm Standing on a Million Lives</crunchyroll:seriesTitle>
-<crunchyroll:episodeTitle>The Island That Flows</crunchyroll:episodeTitle>
-<crunchyroll:episodeNumber>16</crunchyroll:episodeNumber>
-<crunchyroll:duration>1420</crunchyroll:duration>
-<crunchyroll:publisher>Warner Japan</crunchyroll:publisher>
-<crunchyroll:subtitleLanguages>pt - br</crunchyroll:subtitleLanguages>
-<media:content type="video/mp4" medium="video" duration="1420"/>
-<media:player width="720" height="480">
-<iframe src="https://www.crunchyroll.com/affiliate_iframeplayer?media_id=818271&video_format=0&video_quality=0&auto_play=0" width="720" height="480" allowfullscreen allow="encrypted-media"></iframe>
-</media:player>
-<media:restriction relationship="allow" type="country">
-af ax al dz as ad ao ai aq ag ar am aw au at az bs bh bb by be bz bj bm bo bq ba bw bv br bg bf bi cm ca cv ky cf td cl cx cc co km cg cd cr ci hr cu cw cy cz dk dj dm do ec eg sv gq er ee et fk fo fi fr gf tf ga gm ge de gh gi gr gl gd gp gu gt gg gn gw gy ht hm va hn hu is ir iq ie im il it jm je jo ke kw lv lb ls lr ly li lt lu mk mg mw ml mt mq mr mu yt mx md mc me ms ma mz na nl an nz ni ne ng nf mp no om ps pa py pe pl pt pr qa re ro ru rw bl sh kn lc mf pm vc sm st sa sn rs sc sl sx sk si so za gs ss es sd sr sj sz se ch sy tj tz tg tt tn tr tm tc ug ua ae gb us um uy uz ve vg vi wf eh ye zm zw
-</media:restriction>
-<media:credit role="distribution company">Ellation LLC</media:credit>
-<media:rating scheme="urn:simple">nonadult</media:rating>
-<media:thumbnail url="https://img1.ak.crunchyroll.com/i/spire2-tmb/20f483f100becef8a5f61615807f3f8c1627629153_full.jpg" width="640" height="360"/>
-<media:thumbnail url="https://img1.ak.crunchyroll.com/i/spire2-tmb/20f483f100becef8a5f61615807f3f8c1627629153_large.jpg" width="200" height="112"/>
-<media:thumbnail url="https://img1.ak.crunchyroll.com/i/spire2-tmb/20f483f100becef8a5f61615807f3f8c1627629153_thumb.jpg" width="160" height="90"/>
-<media:thumbnail url="https://img1.ak.crunchyroll.com/i/spire2-tmb/20f483f100becef8a5f61615807f3f8c1627629153_medium.jpg" width="100" height="56"/>
-<media:thumbnail url="https://img1.ak.crunchyroll.com/i/spire2-tmb/20f483f100becef8a5f61615807f3f8c1627629153_small.jpg" width="50" height="28"/>
-<media:keywords>
-isekai, action, fantasy, deutsche synchro, adventure
-</media:keywords>
-<crunchyroll:modifiedDate>Fri, 17 Sep 2021 14:45:04 GMT</crunchyroll:modifiedDate>*/
     
 }
 

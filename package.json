@@ -1,7 +1,7 @@
 {
     "name": "crunchyroll-downloader-nx",
     "short_name": "crunchy",
-    "version": "5.3.1",
+    "version": "5.3.2",
     "description": "Download from Crunchyroll via cli.",
     "keywords": [
         "util",
